@@ -86,7 +86,8 @@ class GameSession(Base):
     finished_at = Column(TIMESTAMP)
 
     host_user = relationship("User")
-    winner_session_movie = relationship("SessionMovie")
+    # foreign_keys is required because there are two FK paths between game_sessions and session_movies
+    winner_session_movie = relationship("SessionMovie", foreign_keys=[winner_session_movie_id])
 
     # Индекс для быстрого поиска по host_user_id
     __table_args__ = (Index('idx_game_sessions_host_user_id', 'host_user_id'),)
@@ -116,7 +117,8 @@ class SessionMovie(Base):
 
     movie = relationship("Movie")
     proposed_by_user = relationship("User")
-    session = relationship("GameSession")
+    # foreign_keys is required because there are two FK paths between session_movies and game_sessions
+    session = relationship("GameSession", foreign_keys=[session_id])
 
     # Уникальный индекс для предотвращения повторов фильмов в одной сессии
     __table_args__ = (
