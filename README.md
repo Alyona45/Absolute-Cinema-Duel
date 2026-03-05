@@ -31,11 +31,12 @@ cp .env_template .env
 ```
 
 Заполнить в `.env`:
-- `DB_USER`
-- `DB_PASSWORD`
-- `DB_HOST`
-- `DB_PORT`
-- `DB_NAME`
+- `DATABASE_URL` — строка подключения к PostgreSQL, например:
+  `postgresql://user:password@localhost:5432/absolute_cinema_duel`
+- `SECRET_KEY` — секретный ключ для подписи JWT
+- `ALGORITHM` — алгоритм JWT (по умолчанию `HS256`)
+- `ACCESS_TOKEN_EXPIRE_MINUTES` — время жизни access-токена в минутах (по умолчанию `30`)
+- `REFRESH_TOKEN_EXPIRE_DAYS` — время жизни refresh-токена в днях (по умолчанию `30`)
 
 ### 6. Подготовить PostgreSQL
 Создать БД (пример):

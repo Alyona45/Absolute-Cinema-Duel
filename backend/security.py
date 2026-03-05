@@ -13,14 +13,14 @@ from backend.database import get_db
 
 logger = logging.getLogger(__name__)
 
-# Points to the login endpoint so Swagger UI knows where to fetch tokens
+# Указывает на эндпоинт входа, чтобы Swagger UI знал, где получать токены
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """
-    Encode a JWT access token.
-    'sub' should be the user's email; 'type' is set to 'access'.
+    Кодирует JWT access-токен.
+    'sub' — email пользователя; 'type' устанавливается в 'access'.
     """
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (
@@ -30,13 +30,27 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
+def create_refresh_token(data: dict, expires_delta: timedelta | None = None) -> str:
+    """
+    Кодирует JWT refresh-токен.
+    'sub' — email пользователя; 'type' устанавливается в 'refresh'.
+    Срок жизни значительно дольше, чем у access-токена.
+    """
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    )
+    to_encode.update({"exp": expire, "type": "refresh"})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
 def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Annotated[Session, Depends(get_db)],
 ) -> models.User:
     """
-    Dependency that decodes the Bearer token and returns the authenticated user.
-    Raises 401 on any validation failure.
+    Зависимость: декодирует Bearer-токен и возвращает аутентифицированного пользователя.
+    При любой ошибке валидации выбрасывает 401.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -62,12 +76,27 @@ def get_current_user(
         return user
 
     except jwt.ExpiredSignatureError:
-        logger.info("Access token expired")
+        logger.info("Срок действия access-токена истёк")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
             headers={"WWW-Authenticate": 'Bearer error="token_expired"'},
         ) from None
     except JWTError as e:
-        logger.error("JWT decode error: %s", e)
+        logger.error("Ошибка декодирования JWT: %s", e)
         raise credentials_exception from e
+
+
+def get_admin_user(
+    current_user: Annotated[models.User, Depends(get_current_user)],
+) -> models.User:
+    """
+    Зависимость: проверяет, что текущий пользователь является администратором.
+    Выбрасывает 403, если у пользователя нет прав администратора.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Недостаточно прав доступа",
+        )
+    return current_user

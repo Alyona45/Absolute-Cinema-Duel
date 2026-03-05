@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, Float, ForeignKey, TIMESTAMP, Index
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP, create_engine
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
@@ -7,32 +7,38 @@ Base = declarative_base()
     
 class User(Base):
     __tablename__ = 'users'
-    
+
     id = Column(Integer, primary_key=True)
     email = Column(String(320), nullable=False, unique=True)
     password_hash = Column(String(255), nullable=False)
     username = Column(String(64))
+    # Флаг администратора — только True/False, по умолчанию обычный пользователь
+    is_admin = Column(Boolean, nullable=False, default=False)
     created_at = Column(TIMESTAMP, nullable=False, default=func.now())
-    
+
     auth_sessions = relationship("AuthSession", back_populates="user")
-    
-    # Индекс на поле email (оно уникально, но можно добавить индекс для скорости)
+
+    # Индекс на поле email для ускорения поиска при аутентификации
     __table_args__ = (Index('idx_users_email', 'email'),)
 
 class AuthSession(Base):
+    """Хранит активные сессии с refresh-токенами.  
+    Позволяет инвалидировать сессии при выходе или компрометации токена.
+    """
     __tablename__ = 'auth_sessions'
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    # Хранится только хэш токена — сырое значение не сохраняется
     refresh_token_hash = Column(String(255), nullable=False)
     expires_at = Column(TIMESTAMP, nullable=False)
 
     user = relationship("User", back_populates="auth_sessions")
 
-    # Все индексы в одном __table_args__
+    # Все индексы объявлены в одном __table_args__
     __table_args__ = (
         Index('idx_auth_sessions_user_id', 'user_id'),
-        Index('refresh_token_hash_unique', 'refresh_token_hash', unique=True)
+        Index('refresh_token_hash_unique', 'refresh_token_hash', unique=True),
     )
     
 class Movie(Base):

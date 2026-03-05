@@ -4,7 +4,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 
 
 class UserCreate(BaseModel):
-    """Schema for incoming registration request body."""
+    """Schema для тела запроса при регистрации."""
 
     email: EmailStr
     password: str
@@ -19,8 +19,8 @@ class UserCreate(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """Schema for the response returned after successful registration.
-    Never includes sensitive fields like password_hash.
+    """Schema ответа после успешной регистрации или получения профиля.
+    Никогда не включает чувствительные поля вроде password_hash.
     """
 
     id: int
@@ -29,12 +29,12 @@ class UserResponse(BaseModel):
     created_at: datetime
 
     class Config:
-        # Allows Pydantic to read data from SQLAlchemy model attributes
+        # Позволяет Pydantic читать данные из атрибутов SQLAlchemy-модели
         from_attributes = True
 
 
 class UserUpdate(BaseModel):
-    """Schema for updating user data by ID (admin). All fields optional."""
+    """Schema для обновления данных пользователя по ID (эндпоинт администратора). Все поля опциональны."""
 
     username: str | None = None
     password: str | None = None
@@ -48,8 +48,8 @@ class UserUpdate(BaseModel):
 
 
 class UserProfileUpdate(BaseModel):
-    """Schema for PATCH /users/me — profile update.
-    Password is intentionally excluded; use /change-password instead.
+    """Schema для PATCH /users/me — обновление профиля.
+    Пароль намеренно исключён; используйте /change-password.
     """
 
     username: str | None = None
@@ -57,7 +57,7 @@ class UserProfileUpdate(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    """Schema for POST /change-password."""
+    """Schema для POST /change-password."""
 
     current_password: str
     new_password: str
@@ -71,7 +71,8 @@ class ChangePasswordRequest(BaseModel):
 
 
 class Token(BaseModel):
-    """Schema for the JWT token response returned after login."""
+    """Schema ответа с токенами, возвращаемая после входа."""
 
     access_token: str
+    refresh_token: str
     token_type: str
