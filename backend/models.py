@@ -1,38 +1,46 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, Float, ForeignKey, TIMESTAMP, Index
+import enum
+from sqlalchemy import Boolean, Column, Enum as SQLEnum, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP, create_engine
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 
 Base = declarative_base()
+
+class SessionStatus(str, enum.Enum):
+    CREATED = "CREATED"
+    FINISHED = "FINISHED"
+    CANCELLED = "CANCELLED"
     
 class User(Base):
     __tablename__ = 'users'
-    
+
     id = Column(Integer, primary_key=True)
     email = Column(String(320), nullable=False, unique=True)
     password_hash = Column(String(255), nullable=False)
     username = Column(String(64))
+    # Флаг администратора — только True/False, по умолчанию обычный пользователь
+    is_admin = Column(Boolean, nullable=False, default=False)
     created_at = Column(TIMESTAMP, nullable=False, default=func.now())
-    
+
     auth_sessions = relationship("AuthSession", back_populates="user")
-    
-    # Индекс на поле email (оно уникально, но можно добавить индекс для скорости)
-    __table_args__ = (Index('idx_users_email', 'email'),)
 
 class AuthSession(Base):
+    """Хранит активные сессии с refresh-токенами.  
+    Позволяет инвалидировать сессии при выходе или компрометации токена.
+    """
     __tablename__ = 'auth_sessions'
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    refresh_token_hash = Column(String(255), nullable=False)
+    # Хранится только хэш токена — сырое значение не сохраняется
+    refresh_token_hash = Column(String(255), nullable=False, unique=True)
     expires_at = Column(TIMESTAMP, nullable=False)
 
     user = relationship("User", back_populates="auth_sessions")
 
-    # Все индексы в одном __table_args__
+    # Индекс для быстрого поиска по user_id
     __table_args__ = (
         Index('idx_auth_sessions_user_id', 'user_id'),
-        Index('refresh_token_hash_unique', 'refresh_token_hash', unique=True)
     )
     
 class Movie(Base):
@@ -48,17 +56,11 @@ class Movie(Base):
     rating = Column(Float)
     cached_at = Column(TIMESTAMP, nullable=False, default=func.now())
 
-    # Уникальный индекс на kinopoisk_id
-    __table_args__ = (Index('idx_movies_kinopoisk_id', 'kinopoisk_id', unique=True),)
-
 class Genre(Base):
     __tablename__ = 'genres'
 
     id = Column(Integer, primary_key=True)
     name = Column(String(64), nullable=False, unique=True)
-
-    # Индекс на поле name (оно уникально, но можно добавить индекс для скорости)
-    __table_args__ = (Index('idx_genres_name', 'name'),)
 
 class MovieGenre(Base):
     __tablename__ = 'movie_genres'
@@ -80,13 +82,14 @@ class GameSession(Base):
 
     id = Column(Integer, primary_key=True)
     host_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    status = Column(String(16))  # CREATED, FINISHED, CANCELLED
+    status = Column(SQLEnum(SessionStatus), default=SessionStatus.CREATED)
     winner_session_movie_id = Column(Integer, ForeignKey('session_movies.id'))
     started_at = Column(TIMESTAMP, nullable=False, default=func.now())
     finished_at = Column(TIMESTAMP)
 
     host_user = relationship("User")
-    winner_session_movie = relationship("SessionMovie")
+    # foreign_keys is required because there are two FK paths between game_sessions and session_movies
+    winner_session_movie = relationship("SessionMovie", foreign_keys=[winner_session_movie_id])
 
     # Индекс для быстрого поиска по host_user_id
     __table_args__ = (Index('idx_game_sessions_host_user_id', 'host_user_id'),)
@@ -116,7 +119,8 @@ class SessionMovie(Base):
 
     movie = relationship("Movie")
     proposed_by_user = relationship("User")
-    session = relationship("GameSession")
+    # foreign_keys is required because there are two FK paths between session_movies and game_sessions
+    session = relationship("GameSession", foreign_keys=[session_id])
 
     # Уникальный индекс для предотвращения повторов фильмов в одной сессии
     __table_args__ = (

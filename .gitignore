@@ -29,3 +29,7 @@ Thumbs.db  # Windows
 # Остальные игнорируемые файлы
 *.bak
 *.swp
+*.lock
+
+# Папки с данными
+.claude/
