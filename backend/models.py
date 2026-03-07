@@ -1,9 +1,15 @@
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP, create_engine
+import enum
+from sqlalchemy import Boolean, Column, Enum as SQLEnum, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP, create_engine
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 
 Base = declarative_base()
+
+class SessionStatus(str, enum.Enum):
+    CREATED = "CREATED"
+    FINISHED = "FINISHED"
+    CANCELLED = "CANCELLED"
     
 class User(Base):
     __tablename__ = 'users'
@@ -18,9 +24,6 @@ class User(Base):
 
     auth_sessions = relationship("AuthSession", back_populates="user")
 
-    # Индекс на поле email для ускорения поиска при аутентификации
-    __table_args__ = (Index('idx_users_email', 'email'),)
-
 class AuthSession(Base):
     """Хранит активные сессии с refresh-токенами.  
     Позволяет инвалидировать сессии при выходе или компрометации токена.
@@ -30,15 +33,14 @@ class AuthSession(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     # Хранится только хэш токена — сырое значение не сохраняется
-    refresh_token_hash = Column(String(255), nullable=False)
+    refresh_token_hash = Column(String(255), nullable=False, unique=True)
     expires_at = Column(TIMESTAMP, nullable=False)
 
     user = relationship("User", back_populates="auth_sessions")
 
-    # Все индексы объявлены в одном __table_args__
+    # Индекс для быстрого поиска по user_id
     __table_args__ = (
         Index('idx_auth_sessions_user_id', 'user_id'),
-        Index('refresh_token_hash_unique', 'refresh_token_hash', unique=True),
     )
     
 class Movie(Base):
@@ -54,17 +56,11 @@ class Movie(Base):
     rating = Column(Float)
     cached_at = Column(TIMESTAMP, nullable=False, default=func.now())
 
-    # Уникальный индекс на kinopoisk_id
-    __table_args__ = (Index('idx_movies_kinopoisk_id', 'kinopoisk_id', unique=True),)
-
 class Genre(Base):
     __tablename__ = 'genres'
 
     id = Column(Integer, primary_key=True)
     name = Column(String(64), nullable=False, unique=True)
-
-    # Индекс на поле name (оно уникально, но можно добавить индекс для скорости)
-    __table_args__ = (Index('idx_genres_name', 'name'),)
 
 class MovieGenre(Base):
     __tablename__ = 'movie_genres'
@@ -86,7 +82,7 @@ class GameSession(Base):
 
     id = Column(Integer, primary_key=True)
     host_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    status = Column(String(16))  # CREATED, FINISHED, CANCELLED
+    status = Column(SQLEnum(SessionStatus), default=SessionStatus.CREATED)
     winner_session_movie_id = Column(Integer, ForeignKey('session_movies.id'))
     started_at = Column(TIMESTAMP, nullable=False, default=func.now())
     finished_at = Column(TIMESTAMP)

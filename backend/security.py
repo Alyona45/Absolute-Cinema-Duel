@@ -60,14 +60,14 @@ def get_current_user(
 
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username: str | None = payload.get("sub")
+        email: str | None = payload.get("sub")
         token_type: str | None = payload.get("type")
 
-        if username is None or token_type != "access":
+        if email is None or token_type != "access":
             raise credentials_exception
 
         user = db.execute(
-            select(models.User).where(models.User.email == username)
+            select(models.User).where(models.User.email == email)
         ).scalars().first()
 
         if user is None:
