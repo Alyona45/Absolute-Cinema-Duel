@@ -18,6 +18,7 @@ class User(Base):
     email = Column(String(320), nullable=False, unique=True)
     password_hash = Column(String(255), nullable=False)
     username = Column(String(64))
+    avatar_url = Column(Text, nullable=True)
     # Флаг администратора — только True/False, по умолчанию обычный пользователь
     is_admin = Column(Boolean, nullable=False, default=False)
     created_at = Column(TIMESTAMP, nullable=False, default=func.now())
@@ -49,6 +50,7 @@ class Movie(Base):
     id = Column(Integer, primary_key=True)
     kinopoisk_id = Column(Integer, nullable=False, unique=True)
     title = Column(String(255), nullable=False)
+    short_description = Column(Text)
     description = Column(Text)
     poster_url = Column(String(1024))
     year = Column(Integer)
