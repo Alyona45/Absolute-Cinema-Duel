@@ -107,3 +107,16 @@ def delete_user(db: Session, user: User) -> None:
     """Безвозвратно удаляет пользователя из базы данных."""
     db.delete(user)
     db.commit()
+
+
+def get_all_users(db: Session, skip: int = 0, limit: int = 100) -> list[User]:
+    """Возвращает список всех пользователей с пагинацией (для админки)."""
+    return db.query(User).offset(skip).limit(limit).all()
+
+
+def set_admin(db: Session, user: User, is_admin: bool) -> User:
+    """Устанавливает или снимает флаг администратора для пользователя."""
+    user.is_admin = is_admin
+    db.commit()
+    db.refresh(user)
+    return user
