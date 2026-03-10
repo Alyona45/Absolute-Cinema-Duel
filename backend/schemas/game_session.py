@@ -5,12 +5,6 @@ from pydantic import BaseModel, ConfigDict
 from backend.models import SessionStatus
 
 
-class GameSessionCreate(BaseModel):
-    """Schema для создания игровой сессии. Требуется только ID хоста."""
-
-    host_user_id: int
-
-
 class GameSessionResponse(BaseModel):
     """Schema ответа с данными игровой сессии."""
 

@@ -65,7 +65,7 @@ def update_movie_cache(db: Session, movie: Movie, update_data: MovieUpdate) -> M
 def get_or_create_genre(db: Session, name: str) -> Genre:
     """
     Возвращает жанр по имени или создаёт новый.
-    Используется внутренне при синхронизации жанров фильма.
+    Использует flush() вместо commit() для атомарности в рамках общей транзакции.
     """
     genre = db.query(Genre).filter(Genre.name == name).first()
     if genre:
@@ -73,8 +73,7 @@ def get_or_create_genre(db: Session, name: str) -> Genre:
 
     genre = Genre(name=name)
     db.add(genre)
-    db.commit()
-    db.refresh(genre)
+    db.flush()
     return genre
 
 

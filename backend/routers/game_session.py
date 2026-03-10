@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend import models
@@ -65,16 +66,6 @@ def create_session(
     return create_game_session(db, host_user_id=current_user.id)
 
 
-@router.get("/{session_id}", response_model=GameSessionResponse)
-def read_session(
-    session_id: int,
-    db: Session = Depends(get_db),
-    _: Annotated[models.User, Depends(get_current_user)] = None,
-) -> GameSessionResponse:
-    """Возвращает данные игровой сессии по ID."""
-    return get_session_or_404(session_id, db)
-
-
 @router.get("/my/list", response_model=list[GameSessionResponse])
 def list_my_sessions(
     current_user: Annotated[models.User, Depends(get_current_user)],
@@ -86,27 +77,14 @@ def list_my_sessions(
     return get_sessions_by_user(db, current_user.id, skip, limit)
 
 
-@router.patch("/{session_id}/status", response_model=GameSessionResponse)
-def change_session_status(
+@router.get("/{session_id}", response_model=GameSessionResponse)
+def read_session(
     session_id: int,
-    new_status: SessionStatus,
-    current_user: Annotated[models.User, Depends(get_current_user)],
     db: Session = Depends(get_db),
+    _: Annotated[models.User, Depends(get_current_user)] = None,
 ) -> GameSessionResponse:
-    """
-    Обновляет статус сессии. Только хост может менять статус.
-    При FINISHED/CANCELLED автоматически записывается время завершения.
-    """
-    game_session = get_session_or_404(session_id, db)
-
-    # Только хост может менять статус сессии
-    if game_session.host_user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Только хост может изменить статус сессии",
-        )
-
-    return update_session_status(db, game_session, new_status)
+    """Возвращает данные игровой сессии по ID."""
+    return get_session_or_404(session_id, db)
 
 
 @router.post("/{session_id}/winner", response_model=GameSessionResponse)
@@ -162,7 +140,14 @@ def join_session(
             detail="Вы уже являетесь участником этой сессии",
         )
 
-    return add_participant(db, session_id, current_user.id)
+    try:
+        return add_participant(db, session_id, current_user.id)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Вы уже являетесь участником этой сессии",
+        )
 
 
 @router.delete("/{session_id}/participants", status_code=status.HTTP_204_NO_CONTENT)
@@ -220,7 +205,14 @@ def propose_movie(
             detail="Только участники сессии могут предлагать фильмы",
         )
 
-    return add_movie_to_session(db, session_id, movie_id, current_user.id)
+    try:
+        return add_movie_to_session(db, session_id, movie_id, current_user.id)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Этот фильм уже предложен в данной сессии",
+        )
 
 
 @router.delete(

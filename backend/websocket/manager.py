@@ -4,7 +4,11 @@
 сообщений конкретному пользователю или группе.
 """
 
+import logging
+
 from fastapi import WebSocket
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
@@ -27,7 +31,8 @@ class ConnectionManager:
         if ws:
             try:
                 await ws.send_json(message)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Не удалось отправить сообщение пользователю %s: %s", user_id, exc)
                 # Если отправка не удалась — считаем соединение мёртвым
                 self.disconnect(user_id)
 

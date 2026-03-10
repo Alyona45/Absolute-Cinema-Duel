@@ -41,21 +41,6 @@ def create_or_get_movie(
     return get_or_create_movie(db, movie_data)
 
 
-@router.get("/{movie_id}", response_model=MovieResponse)
-def read_movie(
-    movie_id: int,
-    db: Session = Depends(get_db),
-) -> MovieResponse:
-    """Возвращает фильм по внутреннему ID."""
-    movie = get_movie_by_id(db, movie_id)
-    if not movie:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Фильм не найден",
-        )
-    return movie
-
-
 @router.get("/kinopoisk/{kinopoisk_id}", response_model=MovieResponse)
 def read_movie_by_kinopoisk(
     kinopoisk_id: int,
@@ -67,6 +52,27 @@ def read_movie_by_kinopoisk(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Фильм с таким kinopoisk_id не найден",
+        )
+    return movie
+
+
+@router.get("/genres/all", response_model=list[GenreResponse])
+def list_all_genres(db: Session = Depends(get_db)) -> list[GenreResponse]:
+    """Возвращает список всех жанров в базе."""
+    return get_all_genres(db)
+
+
+@router.get("/{movie_id}", response_model=MovieResponse)
+def read_movie(
+    movie_id: int,
+    db: Session = Depends(get_db),
+) -> MovieResponse:
+    """Возвращает фильм по внутреннему ID."""
+    movie = get_movie_by_id(db, movie_id)
+    if not movie:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Фильм не найден",
         )
     return movie
 
@@ -124,9 +130,3 @@ def replace_movie_genres(
             detail="Фильм не найден",
         )
     return sync_movie_genres(db, movie_id, genre_names)
-
-
-@router.get("/genres/all", response_model=list[GenreResponse])
-def list_all_genres(db: Session = Depends(get_db)) -> list[GenreResponse]:
-    """Возвращает список всех жанров в базе."""
-    return get_all_genres(db)

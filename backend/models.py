@@ -8,6 +8,7 @@ Base = declarative_base()
 
 class SessionStatus(str, enum.Enum):
     CREATED = "CREATED"
+    PLAYING = "PLAYING"
     FINISHED = "FINISHED"
     CANCELLED = "CANCELLED"
     
@@ -17,7 +18,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String(320), nullable=False, unique=True)
     password_hash = Column(String(255), nullable=False)
-    username = Column(String(64))
+    username = Column(String(64), nullable=False)
     # Флаг администратора — только True/False, по умолчанию обычный пользователь
     is_admin = Column(Boolean, nullable=False, default=False)
     created_at = Column(TIMESTAMP, nullable=False, default=func.now())

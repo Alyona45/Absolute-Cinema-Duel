@@ -3,9 +3,17 @@
 Структура комнаты и участников для real-time взаимодействия.
 """
 
+import enum
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+class RoomStatus(str, enum.Enum):
+    """Statuses of an in-memory room."""
+    WAITING = "waiting"
+    PLAYING = "playing"
+    FINISHED = "finished"
 
 
 @dataclass
@@ -14,6 +22,7 @@ class Participant:
     username: str
     connected: bool = True
     is_guest: bool = False
+    email: str | None = None  # Для зарегистрированных пользователей — для верификации JWT
 
 
 @dataclass
@@ -24,7 +33,7 @@ class Room:
     """
     host_user_id: str
     participants: dict[str, Participant] = field(default_factory=dict)
-    status: str = "waiting"  # waiting | playing | finished
+    status: RoomStatus = RoomStatus.WAITING
     last_activity: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
@@ -39,5 +48,5 @@ class Room:
                 }
                 for uid, p in self.participants.items()
             },
-            "status": self.status,
+            "status": self.status.value,
         }

@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -18,8 +20,8 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    email: str
-    username: str
+    email: EmailStr
+    username: str = Field(max_length=64)
     created_at: datetime
 
 
@@ -51,4 +53,4 @@ class Token(BaseModel):
 
     access_token: str
     refresh_token: str
-    token_type: str
+    token_type: Literal["bearer"]
