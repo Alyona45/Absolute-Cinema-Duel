@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Boolean, Column, Enum as SQLEnum, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP, create_engine
+from sqlalchemy import Boolean, Column, Enum as SQLEnum, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
@@ -56,7 +56,7 @@ class Movie(Base):
     year = Column(Integer)
     runtime = Column(Integer)
     rating = Column(Float)
-    cached_at = Column(TIMESTAMP, nullable=False, default=func.now())
+    cached_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
 
 class Genre(Base):
     __tablename__ = 'genres'

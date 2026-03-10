@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -18,25 +18,25 @@ class MovieService:
         self.repository = MovieRepository(db)
         self.kinopoisk_client = kinopoisk_client or KinopoiskClient()
 
-    def get_movie_by_title(self, title: str) -> Movie | None:
+    async def get_movie_by_title(self, title: str) -> Movie | None:
         movie = self.repository.get_movie_by_title(title)
 
         if movie and not self._is_cache_expired(movie.cached_at):
             return movie
 
-        api_movie = self.kinopoisk_client.search_movie(title)
+        api_movie = await self.kinopoisk_client.search_movie(title)
         if api_movie is None:
             return movie
 
         movie_data = self._normalize_api_movie(api_movie)
-        movie_data["cached_at"] = datetime.utcnow()
+        movie_data["cached_at"] = datetime.now(timezone.utc)
 
         if movie:
             return self.repository.update_movie(movie, movie_data)
         return self.repository.create_movie(movie_data)
 
     def _is_cache_expired(self, cached_at: datetime) -> bool:
-        return cached_at + timedelta(days=self.CACHE_TTL_DAYS) <= datetime.utcnow()
+        return cached_at + timedelta(days=self.CACHE_TTL_DAYS) <= datetime.now(timezone.utc)
 
     def _normalize_api_movie(self, api_movie: dict) -> dict:
         poster = api_movie.get("poster") or {}
