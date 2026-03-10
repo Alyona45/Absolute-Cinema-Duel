@@ -2,6 +2,7 @@ import hashlib
 import secrets
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
+from pydantic import BaseModel
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,6 +25,12 @@ from backend.crud.user import (
 from backend.security import create_access_token, create_refresh_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+def get_refresh_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 def get_refresh_token_hash(token: str) -> str:
