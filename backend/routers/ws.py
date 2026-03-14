@@ -5,15 +5,13 @@
 
 import logging
 import uuid
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from jose import JWTError, jwt
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field, ValidationError
 
 from backend import models, settings
-from backend.database import get_db
 from backend.security import get_current_user_optional
 from backend.websocket.manager import ConnectionManager
 from backend.websocket.room import RoomManager
@@ -64,6 +62,63 @@ class RoomBody(BaseModel):
         max_length=32,
         description="Имя гостя. Используется только если нет авторизации.",
     )
+
+
+class PingMessage(BaseModel):
+    type: Literal["PING"]
+
+
+class PongMessage(BaseModel):
+    type: Literal["PONG"] = "PONG"
+
+
+class RoomStatePayload(BaseModel):
+    host_user_id: str
+    participants: dict[str, dict[str, Any]]
+    status: str
+
+
+class RoomStateMessage(BaseModel):
+    type: Literal["ROOM_STATE"] = "ROOM_STATE"
+    payload: RoomStatePayload
+
+
+class PlayerJoinedPayload(BaseModel):
+    user_id: str
+    username: str
+    is_guest: bool
+
+
+class PlayerJoinedMessage(BaseModel):
+    type: Literal["PLAYER_JOINED"] = "PLAYER_JOINED"
+    payload: PlayerJoinedPayload
+
+
+class PlayerDisconnectedPayload(BaseModel):
+    user_id: str
+
+
+class PlayerDisconnectedMessage(BaseModel):
+    type: Literal["PLAYER_DISCONNECTED"] = "PLAYER_DISCONNECTED"
+    payload: PlayerDisconnectedPayload
+
+
+class GameStartedPayload(BaseModel):
+    room_id: str
+
+
+class GameStartedMessage(BaseModel):
+    type: Literal["GAME_STARTED"] = "GAME_STARTED"
+    payload: GameStartedPayload
+
+
+class ErrorPayload(BaseModel):
+    message: str
+
+
+class ErrorMessage(BaseModel):
+    type: Literal["ERROR"] = "ERROR"
+    payload: ErrorPayload
 
 
 def _guest_username(name: str | None) -> str:
@@ -162,10 +217,17 @@ async def start_room(
 
     # Уведомляем всех участников о старте
     participants = room_manager.participant_ids(room_id)
-    await conn_manager.broadcast(participants, {
-        "type": "GAME_STARTED",
-        "payload": {"room_id": room_id},
-    })
+    results = await conn_manager.broadcast(
+        participants,
+        GameStartedMessage(payload=GameStartedPayload(room_id=room_id)).model_dump(),
+    )
+    failed = [uid for uid, success in results.items() if not success]
+    if failed:
+        logger.error("Не удалось отправить GAME_STARTED %s пользователям: %s", len(failed), failed)
+        raise HTTPException(
+            status_code=503,
+            detail="Игра запущена, но не все участники получили уведомление",
+        )
     return {"status": "ok"}
 
 
@@ -220,30 +282,39 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
     try:
         await conn_manager.connect(user_id, websocket)
     except Exception as exc:
-        logger.error("Ошибка при accept WebSocket для %s: %s", user_id, exc)
+        logger.error("WebSocket accept failed for %s: %s", user_id, exc, exc_info=True)
+        try:
+            await websocket.close(code=1011, reason="Server error")
+        except RuntimeError:
+            logger.warning("WebSocket уже закрыт после ошибки accept для %s", user_id)
         return
 
     room_manager.set_connected(room_id, user_id, True)
 
     # Отправляем подключившемуся полное состояние комнаты
     try:
-        await conn_manager.send(user_id, {
-            "type": "ROOM_STATE",
-            "payload": room.to_dict(),
-        })
+        room_state = RoomStateMessage(payload=RoomStatePayload.model_validate(room.to_dict()))
+        await conn_manager.send(user_id, room_state.model_dump())
     except Exception as exc:
-        logger.error("Не удалось отправить ROOM_STATE для %s: %s", user_id, exc)
+        logger.error("Не удалось отправить ROOM_STATE для %s: %s", user_id, exc, exc_info=True)
 
     # Уведомляем остальных о новом подключении
     others = [uid for uid in room_manager.participant_ids(room_id) if uid != user_id]
-    await conn_manager.broadcast(others, {
-        "type": "PLAYER_JOINED",
-        "payload": {
-            "user_id": user_id,
-            "username": participant.username,
-            "is_guest": participant.is_guest,
-        },
-    })
+    join_message = PlayerJoinedMessage(
+        payload=PlayerJoinedPayload(
+            user_id=user_id,
+            username=participant.username,
+            is_guest=participant.is_guest,
+        )
+    )
+    join_results = await conn_manager.broadcast(others, join_message.model_dump())
+    join_failed = [uid for uid, success in join_results.items() if not success]
+    if join_failed:
+        logger.error(
+            "Не удалось отправить PLAYER_JOINED %s пользователям: %s",
+            len(join_failed),
+            join_failed,
+        )
 
     # ── Цикл обработки сообщений ──
     try:
@@ -252,22 +323,24 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 data = await websocket.receive_json()
             except ValueError:
                 # Клиент прислал невалидный JSON — не роняем соединение
-                await conn_manager.send(user_id, {
-                    "type": "ERROR",
-                    "payload": {"message": "Невалидный JSON"},
-                })
+                await conn_manager.send(
+                    user_id,
+                    ErrorMessage(payload=ErrorPayload(message="Невалидный JSON")).model_dump(),
+                )
                 continue
 
-            msg_type = data.get("type")
+            try:
+                PingMessage.model_validate(data)
+            except ValidationError:
+                await conn_manager.send(
+                    user_id,
+                    ErrorMessage(
+                        payload=ErrorPayload(message="Невалидное сообщение")
+                    ).model_dump(),
+                )
+                continue
 
-            if msg_type == "PING":
-                await conn_manager.send(user_id, {"type": "PONG"})
-            else:
-                # Неизвестный тип сообщения — сообщаем клиенту
-                await conn_manager.send(user_id, {
-                    "type": "ERROR",
-                    "payload": {"message": f"Неизвестный тип сообщения: {msg_type}"},
-                })
+            await conn_manager.send(user_id, PongMessage().model_dump())
 
     except WebSocketDisconnect:
         logger.info("Пользователь %s отключился от комнаты %s", user_id, room_id)
@@ -279,14 +352,39 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
         )
     finally:
         # Гарантированная очистка при любом завершении
-        conn_manager.disconnect(user_id)
-        room_manager.set_connected(room_id, user_id, False)
         try:
-            # Собираем актуальный список участников (не устаревший others)
+            conn_manager.disconnect(user_id)
+            room_manager.set_connected(room_id, user_id, False)
             current_others = [uid for uid in room_manager.participant_ids(room_id) if uid != user_id]
-            await conn_manager.broadcast(current_others, {
-                "type": "PLAYER_DISCONNECTED",
-                "payload": {"user_id": user_id},
-            })
+            if current_others:
+                results = await conn_manager.broadcast(
+                    current_others,
+                    PlayerDisconnectedMessage(
+                        payload=PlayerDisconnectedPayload(user_id=user_id)
+                    ).model_dump(),
+                )
+                failed = [uid for uid, success in results.items() if not success]
+                if failed:
+                    logger.error(
+                        "Не удалось отправить PLAYER_DISCONNECTED %s пользователям: %s",
+                        len(failed),
+                        failed,
+                    )
+            logger.info("Пользователь %s отключён от комнаты %s", user_id, room_id)
         except Exception as exc:
-            logger.error("Не удалось разослать PLAYER_DISCONNECTED для %s: %s", user_id, exc)
+            logger.error(
+                "Ошибка cleanup для пользователя %s в комнате %s: %s",
+                user_id,
+                room_id,
+                exc,
+                exc_info=True,
+            )
+            try:
+                room_manager.set_connected(room_id, user_id, False)
+            except Exception as retry_exc:
+                logger.error(
+                    "Повторная попытка set_connected(false) провалена для %s: %s",
+                    user_id,
+                    retry_exc,
+                    exc_info=True,
+                )

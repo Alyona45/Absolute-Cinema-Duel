@@ -32,11 +32,14 @@ class RoomManager:
         """
         room_id = uuid.uuid4().hex[:8]
         user_id = str(uuid.uuid4())
-        room = Room(host_user_id=user_id)
-        room.participants[user_id] = Participant(
-            username=host_username, is_guest=is_guest, email=email,
+
+        host_participant = (
+            Participant.guest(host_username)
+            if is_guest
+            else Participant.authenticated(host_username, email=self._require_email(email))
         )
-        room.last_activity = time.time()
+        room = Room(host_user_id=user_id, participants={user_id: host_participant})
+        room.touch()
         self.rooms[room_id] = room
         return room_id, user_id
 
@@ -56,11 +59,15 @@ class RoomManager:
         room = self.rooms.get(room_id)
         if room is None or room.status != RoomStatus.WAITING:
             return None
-        room.last_activity = time.time()
-        user_id = str(uuid.uuid4())
-        room.participants[user_id] = Participant(
-            username=username, is_guest=is_guest, email=email,
+
+        participant = (
+            Participant.guest(username)
+            if is_guest
+            else Participant.authenticated(username, email=self._require_email(email))
         )
+
+        user_id = str(uuid.uuid4())
+        room.add_participant(user_id, participant)
         return user_id
 
     # ─────────────────── Получение данных ─────────────────────────
@@ -85,8 +92,8 @@ class RoomManager:
         room = self.rooms.get(room_id)
         if room is None or room.status != RoomStatus.WAITING:
             return False
-        room.status = RoomStatus.PLAYING
-        room.last_activity = time.time()
+
+        room.change_status(RoomStatus.PLAYING)
         return True
 
     def finish_game(self, room_id: str) -> bool:
@@ -97,8 +104,8 @@ class RoomManager:
         room = self.rooms.get(room_id)
         if room is None or room.status != RoomStatus.PLAYING:
             return False
-        room.status = RoomStatus.FINISHED
-        room.last_activity = time.time()
+
+        room.change_status(RoomStatus.FINISHED)
         return True
 
     # ─────────────────── Статус подключения ───────────────────────
@@ -106,9 +113,8 @@ class RoomManager:
     def set_connected(self, room_id: str, user_id: str, connected: bool):
         """Обновляет флаг connected для участника и last_activity."""
         room = self.rooms.get(room_id)
-        if room and user_id in room.participants:
-            room.participants[user_id].connected = connected
-            room.last_activity = time.time()
+        if room:
+            room.set_connected(user_id, connected)
 
     # ─────────────────── Очистка ──────────────────────────────────
 
@@ -136,3 +142,9 @@ class RoomManager:
             logger.info("Комната %s удалена по TTL", rid)
 
         return dead
+
+    @staticmethod
+    def _require_email(email: str | None) -> str:
+        if email is None:
+            raise ValueError("Authenticated participant requires email")
+        return email

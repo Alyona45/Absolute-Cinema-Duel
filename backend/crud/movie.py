@@ -1,9 +1,22 @@
 from datetime import datetime, timezone
+import logging
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.models import Genre, Movie, MovieGenre
 from backend.schemas.movie import MovieCreate, MovieUpdate
+
+logger = logging.getLogger(__name__)
+
+
+def _commit(db: Session, action: str) -> None:
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Ошибка БД при %s", action)
+        raise
 
 
 def get_movie_by_id(db: Session, movie_id: int) -> Movie | None:
@@ -36,7 +49,7 @@ def get_or_create_movie(db: Session, movie_data: MovieCreate) -> Movie:
         rating=movie_data.rating,
     )
     db.add(db_movie)
-    db.commit()
+    _commit(db, "создании фильма")
     db.refresh(db_movie)
     return db_movie
 
@@ -54,7 +67,7 @@ def update_movie_cache(db: Session, movie: Movie, update_data: MovieUpdate) -> M
     # Обновляем время кеширования при каждом обновлении данных
     movie.cached_at = datetime.now(timezone.utc)
 
-    db.commit()
+    _commit(db, "обновлении кеша фильма")
     db.refresh(movie)
     return movie
 
@@ -126,5 +139,5 @@ def sync_movie_genres(db: Session, movie_id: int, genre_names: list[str]) -> lis
             MovieGenre.genre_id.in_(to_remove),
         ).delete(synchronize_session="fetch")
 
-    db.commit()
+    _commit(db, "синхронизации жанров фильма")
     return target_genres

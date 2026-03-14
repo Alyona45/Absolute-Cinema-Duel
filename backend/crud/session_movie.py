@@ -1,6 +1,20 @@
+import logging
+
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.models import SessionMovie
+
+logger = logging.getLogger(__name__)
+
+
+def _commit(db: Session, action: str) -> None:
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Ошибка БД при %s", action)
+        raise
 
 
 def add_movie_to_session(
@@ -20,7 +34,7 @@ def add_movie_to_session(
         proposed_by_user_id=proposed_by_user_id,
     )
     db.add(session_movie)
-    db.commit()
+    _commit(db, "добавлении фильма в сессию")
     db.refresh(session_movie)
     return session_movie
 
@@ -37,7 +51,7 @@ def remove_movie_from_session(db: Session, session_movie_id: int) -> bool:
         return False
 
     db.delete(session_movie)
-    db.commit()
+    _commit(db, "удалении фильма из сессии")
     return True
 
 

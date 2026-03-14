@@ -1,8 +1,21 @@
 from datetime import datetime, timezone
+import logging
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.models import GameSession, SessionStatus
+
+logger = logging.getLogger(__name__)
+
+
+def _commit(db: Session, action: str) -> None:
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Ошибка БД при %s", action)
+        raise
 
 
 def create_game_session(db: Session, host_user_id: int) -> GameSession:
@@ -12,7 +25,7 @@ def create_game_session(db: Session, host_user_id: int) -> GameSession:
     """
     session = GameSession(host_user_id=host_user_id)
     db.add(session)
-    db.commit()
+    _commit(db, "создании игровой сессии")
     db.refresh(session)
     return session
 
@@ -58,7 +71,7 @@ def update_session_status(
     if new_status in (SessionStatus.FINISHED, SessionStatus.CANCELLED):
         game_session.finished_at = datetime.now(timezone.utc)
 
-    db.commit()
+    _commit(db, "обновлении статуса игровой сессии")
     db.refresh(game_session)
     return game_session
 
@@ -78,6 +91,6 @@ def set_winner(
     game_session.status = SessionStatus.FINISHED
     game_session.finished_at = datetime.now(timezone.utc)
 
-    db.commit()
+    _commit(db, "установке победителя игровой сессии")
     db.refresh(game_session)
     return game_session

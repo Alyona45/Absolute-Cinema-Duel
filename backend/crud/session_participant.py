@@ -1,6 +1,20 @@
+import logging
+
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from backend.models import SessionParticipant, User
+from backend.models import SessionParticipant
+
+logger = logging.getLogger(__name__)
+
+
+def _commit(db: Session, action: str) -> None:
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Ошибка БД при %s", action)
+        raise
 
 
 def _get_participant(db: Session, session_id: int, user_id: int) -> SessionParticipant | None:
@@ -23,7 +37,7 @@ def add_participant(db: Session, session_id: int, user_id: int) -> SessionPartic
     """
     participant = SessionParticipant(session_id=session_id, user_id=user_id)
     db.add(participant)
-    db.commit()
+    _commit(db, "добавлении участника в сессию")
     db.refresh(participant)
     return participant
 
@@ -38,7 +52,7 @@ def remove_participant(db: Session, session_id: int, user_id: int) -> bool:
         return False
 
     db.delete(participant)
-    db.commit()
+    _commit(db, "удалении участника из сессии")
     return True
 
 
