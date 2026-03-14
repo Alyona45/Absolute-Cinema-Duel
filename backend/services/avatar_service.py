@@ -1,4 +1,5 @@
 from pathlib import Path
+from tempfile import SpooledTemporaryFile
 from uuid import uuid4
 import shutil
 
@@ -69,6 +70,39 @@ def _validate_file_size(stream) -> None:
         stream.seek(0)
 
 
+def _prepare_stream(stream):
+    if hasattr(stream, "seek") and hasattr(stream, "tell"):
+        stream.seek(0)
+        return stream
+
+    buffered = SpooledTemporaryFile(max_size=MAX_AVATAR_SIZE)
+    while chunk := stream.read(1024 * 1024):
+        buffered.write(chunk)
+        if buffered.tell() > MAX_AVATAR_SIZE:
+            buffered.close()
+            raise ValueError("Размер файла аватара превышает 5 МБ")
+
+    buffered.seek(0)
+    return buffered
+
+
+def delete_avatar(path: str) -> None:
+    """Удаляет файл аватара из storage/avatars, если он существует."""
+    if not path:
+        return
+
+    project_root = Path(__file__).resolve().parents[2]
+    avatars_dir = (project_root / "storage" / "avatars").resolve()
+
+    relative_path = path.removeprefix("/")
+    file_path = (project_root / relative_path).resolve()
+
+    if avatars_dir not in file_path.parents:
+        return
+
+    file_path.unlink(missing_ok=True)
+
+
 def save_avatar(file) -> str:
     """Сохраняет аватар в storage/avatars и возвращает URL-путь к файлу."""
     project_root = Path(__file__).resolve().parents[2]
@@ -77,21 +111,23 @@ def save_avatar(file) -> str:
 
     original_name = getattr(file, "filename", "") or ""
     extension = _validate_extension(original_name)
-    stream = getattr(file, "file", file)
+    source_stream = getattr(file, "file", file)
+    stream = _prepare_stream(source_stream)
 
-    if hasattr(stream, "seek"):
-        stream.seek(0)
+    try:
+        _validate_file_content(stream, extension)
+        _validate_file_size(stream)
 
-    _validate_file_content(stream, extension)
-    _validate_file_size(stream)
+        filename = f"{uuid4()}{extension}"
+        destination = avatars_dir / filename
 
-    filename = f"{uuid4()}{extension}"
-    destination = avatars_dir / filename
+        if hasattr(stream, "seek"):
+            stream.seek(0)
 
-    if hasattr(stream, "seek"):
-        stream.seek(0)
-
-    with destination.open("wb") as output:
-        shutil.copyfileobj(stream, output)
+        with destination.open("wb") as output:
+            shutil.copyfileobj(stream, output)
+    finally:
+        if stream is not source_stream:
+            stream.close()
 
     return f"/storage/avatars/{filename}"

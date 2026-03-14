@@ -41,6 +41,7 @@ class UserProfileUpdate(BaseModel):
 
     username: str | None = None
     email: EmailStr | None = None
+    avatar_url: str | None = None
 
 
 class ChangePasswordRequest(BaseModel):

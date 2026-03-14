@@ -85,6 +85,9 @@ def update_user_profile(db: Session, user: User, update_data: UserProfileUpdate)
     if update_data.email is not None:
         user.email = update_data.email
 
+    if update_data.avatar_url is not None:
+        user.avatar_url = update_data.avatar_url
+
     db.commit()
     db.refresh(user)
     return user

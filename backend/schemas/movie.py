@@ -1,6 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import field_validator
 
 
 class MovieCreate(BaseModel):
@@ -30,12 +31,21 @@ class MovieResponse(BaseModel):
     year: int | None = None
     runtime: int | None = None
     rating: float | None = None
-    cached_at: datetime
+    genres: list["MovieGenreResponse"] = Field(default_factory=list, validation_alias="genre_links")
+    cached_at: AwareDatetime
+
+    @field_validator("cached_at", mode="before")
+    @classmethod
+    def ensure_cached_at_is_aware(cls, value: object) -> object:
+        if isinstance(value, datetime) and (value.tzinfo is None or value.utcoffset() is None):
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
 
 class MovieUpdate(BaseModel):
     """Schema для обновления кеша фильма. Все поля опциональны."""
 
+    kinopoisk_id: int | None = None
     title: str | None = None
     short_description: str | None = None
     description: str | None = None
@@ -52,3 +62,11 @@ class GenreResponse(BaseModel):
 
     id: int
     name: str
+
+
+class MovieGenreResponse(BaseModel):
+    """Schema связи фильма с жанром для сериализации ORM relationship."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    genre: GenreResponse
