@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from backend import models
@@ -16,6 +16,7 @@ from backend.crud.user import (
     delete_user,
 )
 from backend.security import get_admin_user, get_current_user
+from backend.services.avatar_service import delete_avatar, save_avatar
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -68,6 +69,36 @@ def edit_me(
             )
 
     return update_user_profile(db, current_user, update_data)
+
+
+@router.post("/me/avatar", response_model=UserResponse)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: Annotated[models.User, Depends(get_current_user)] = None,
+    db: Session = Depends(get_db),
+) -> UserResponse:
+    """Загружает новый аватар текущего пользователя и обновляет профиль."""
+    old_avatar_url = current_user.avatar_url
+
+    try:
+        avatar_url = save_avatar(file)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        update_data = UserProfileUpdate(avatar_url=avatar_url)
+        updated_user = update_user_profile(db, current_user, update_data)
+    except Exception:
+        delete_avatar(avatar_url)
+        raise
+
+    if old_avatar_url:
+        delete_avatar(old_avatar_url)
+
+    return updated_user
 
 
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)

@@ -22,6 +22,8 @@ class UserResponse(BaseModel):
     id: int
     email: EmailStr
     username: str = Field(max_length=64)
+    avatar_url: str | None = None
+    is_admin: bool
     created_at: datetime
 
 
@@ -39,6 +41,7 @@ class UserProfileUpdate(BaseModel):
 
     username: str | None = None
     email: EmailStr | None = None
+    avatar_url: str | None = None
 
 
 class ChangePasswordRequest(BaseModel):

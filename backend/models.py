@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Boolean, Column, Enum as SQLEnum, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP, create_engine
+from sqlalchemy import Boolean, Column, Enum as SQLEnum, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
@@ -18,10 +18,11 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String(320), nullable=False, unique=True)
     password_hash = Column(String(255), nullable=False)
-    username = Column(String(64), nullable=False)
+    username = Column(String(64))
+    avatar_url = Column(Text, nullable=True)
     # Флаг администратора — только True/False, по умолчанию обычный пользователь
     is_admin = Column(Boolean, nullable=False, default=False)
-    created_at = Column(TIMESTAMP, nullable=False, default=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
 
     auth_sessions = relationship("AuthSession", back_populates="user")
 
@@ -35,7 +36,7 @@ class AuthSession(Base):
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     # Хранится только хэш токена — сырое значение не сохраняется
     refresh_token_hash = Column(String(255), nullable=False, unique=True)
-    expires_at = Column(TIMESTAMP, nullable=False)
+    expires_at = Column(TIMESTAMP(timezone=True), nullable=False)
 
     user = relationship("User", back_populates="auth_sessions")
 
@@ -50,12 +51,14 @@ class Movie(Base):
     id = Column(Integer, primary_key=True)
     kinopoisk_id = Column(Integer, nullable=False, unique=True)
     title = Column(String(255), nullable=False)
+    short_description = Column(Text)
     description = Column(Text)
     poster_url = Column(String(1024))
     year = Column(Integer)
     runtime = Column(Integer)
     rating = Column(Float)
-    cached_at = Column(TIMESTAMP, nullable=False, default=func.now())
+    cached_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
+    genre_links = relationship("MovieGenre")
 
 class Genre(Base):
     __tablename__ = 'genres'
@@ -85,8 +88,8 @@ class GameSession(Base):
     host_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     status = Column(SQLEnum(SessionStatus), default=SessionStatus.CREATED)
     winner_session_movie_id = Column(Integer, ForeignKey('session_movies.id'))
-    started_at = Column(TIMESTAMP, nullable=False, default=func.now())
-    finished_at = Column(TIMESTAMP)
+    started_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
+    finished_at = Column(TIMESTAMP(timezone=True))
 
     host_user = relationship("User")
     # foreign_keys is required because there are two FK paths between game_sessions and session_movies
