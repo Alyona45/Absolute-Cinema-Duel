@@ -12,6 +12,11 @@ from fastapi import WebSocket
 logger = logging.getLogger(__name__)
 
 
+class NoActiveWebSocketError(ConnectionError):
+    """Ожидаемая ошибка: у пользователя нет активного WebSocket."""
+
+
+
 class ConnectionManager:
     def __init__(self):
         # Маппинг user_id → активный WebSocket
@@ -30,7 +35,7 @@ class ConnectionManager:
         """Отправляет JSON-сообщение конкретному пользователю."""
         ws = self.connections.get(user_id)
         if ws is None:
-            raise ConnectionError(f"No active websocket for user_id={user_id}")
+            raise NoActiveWebSocketError(f"No active websocket for user_id={user_id}")
 
         try:
             await ws.send_json(message)
@@ -54,6 +59,9 @@ class ConnectionManager:
             try:
                 await self.send(user_id, message)
                 results[user_id] = True
+            except NoActiveWebSocketError as exc:
+                logger.warning("Broadcast skipped for %s: %s", user_id, exc)
+                results[user_id] = False
             except Exception as exc:
                 logger.error("Broadcast failed for %s: %s", user_id, exc, exc_info=True)
                 results[user_id] = False

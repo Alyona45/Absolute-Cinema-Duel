@@ -216,19 +216,19 @@ async def start_room(
         raise HTTPException(400, "Невозможно начать игру (неверный статус комнаты)")
 
     # Уведомляем всех участников о старте
-    participants = room_manager.participant_ids(room_id)
+    participants = room_manager.connected_participant_ids(room_id)
     results = await conn_manager.broadcast(
         participants,
         GameStartedMessage(payload=GameStartedPayload(room_id=room_id)).model_dump(),
     )
     failed = [uid for uid, success in results.items() if not success]
     if failed:
-        logger.error("Не удалось отправить GAME_STARTED %s пользователям: %s", len(failed), failed)
-        raise HTTPException(
-            status_code=503,
-            detail="Игра запущена, но не все участники получили уведомление",
-        )
-    return {"status": "ok"}
+        logger.warning("GAME_STARTED не доставлен %s пользователям: %s", len(failed), failed)
+    return {
+        "status": "ok",
+        "notified": len(participants) - len(failed),
+        "undelivered_user_ids": failed,
+    }
 
 
 @router.get("/rooms/{room_id}")
@@ -299,7 +299,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
         logger.error("Не удалось отправить ROOM_STATE для %s: %s", user_id, exc, exc_info=True)
 
     # Уведомляем остальных о новом подключении
-    others = [uid for uid in room_manager.participant_ids(room_id) if uid != user_id]
+    others = [uid for uid in room_manager.connected_participant_ids(room_id) if uid != user_id]
     join_message = PlayerJoinedMessage(
         payload=PlayerJoinedPayload(
             user_id=user_id,
@@ -355,7 +355,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
         try:
             conn_manager.disconnect(user_id)
             room_manager.set_connected(room_id, user_id, False)
-            current_others = [uid for uid in room_manager.participant_ids(room_id) if uid != user_id]
+            current_others = [uid for uid in room_manager.connected_participant_ids(room_id) if uid != user_id]
             if current_others:
                 results = await conn_manager.broadcast(
                     current_others,

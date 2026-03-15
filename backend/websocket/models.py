@@ -19,7 +19,7 @@ class RoomStatus(str, enum.Enum):
 class Participant:
     """Участник комнаты: имя, статус подключения, гость или нет."""
     username: str
-    connected: bool = True
+    connected: bool = False
     is_guest: bool = False
     email: str | None = None  # Для зарегистрированных пользователей — для верификации JWT
 

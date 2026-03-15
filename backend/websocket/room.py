@@ -81,6 +81,17 @@ class RoomManager:
         room = self.rooms.get(room_id)
         return list(room.participants.keys()) if room else []
 
+    def connected_participant_ids(self, room_id: str) -> list[str]:
+        """Возвращает список user_id только подключённых участников комнаты."""
+        room = self.rooms.get(room_id)
+        if room is None:
+            return []
+        return [
+            user_id
+            for user_id, participant in room.participants.items()
+            if participant.connected
+        ]
+
     # ─────────────────── Управление статусом ──────────────────────
 
     def start_game(self, room_id: str) -> bool:
