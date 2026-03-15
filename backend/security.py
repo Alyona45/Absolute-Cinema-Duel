@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 # Указывает на эндпоинт входа, чтобы Swagger UI знал, где получать токены
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
+# Опциональная схема — не выбрасывает 401 при отсутствии токена
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """
@@ -100,3 +103,30 @@ def get_admin_user(
             detail="Недостаточно прав доступа",
         )
     return current_user
+
+
+def get_current_user_optional(
+    token: Annotated[str | None, Depends(oauth2_scheme_optional)],
+    db: Annotated[Session, Depends(get_db)],
+) -> models.User | None:
+    """
+    Опциональная аутентификация: возвращает пользователя если JWT
+    присутствует и валиден, иначе None.
+    Не выбрасывает исключений при отсутствии/невалидности токена.
+    """
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        email: str | None = payload.get("sub")
+        token_type: str | None = payload.get("type")
+
+        if email is None or token_type != "access":
+            return None
+
+        user = db.execute(
+            select(models.User).where(models.User.email == email)
+        ).scalars().first()
+        return user
+    except JWTError:
+        return None
