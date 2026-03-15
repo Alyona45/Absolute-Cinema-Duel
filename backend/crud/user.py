@@ -1,4 +1,7 @@
+import logging
+
 from passlib.context import CryptContext
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.models import User
@@ -6,6 +9,16 @@ from backend.schemas.user import UserCreate, UserUpdate, UserProfileUpdate
 
 # bcrypt — отраслевой стандарт хеширования паролей
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+logger = logging.getLogger(__name__)
+
+
+def _commit(db: Session, action: str) -> None:
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Ошибка БД при %s", action)
+        raise
 
 
 def hash_password(password: str) -> str:
@@ -47,7 +60,7 @@ def create_user(db: Session, user_data: UserCreate) -> User:
         password_hash=hash_password(user_data.password),
     )
     db.add(db_user)
-    db.commit()
+    _commit(db, "создании пользователя")
     db.refresh(db_user)  # Перезагружаем объект, чтобы получить поля, сгенерированные БД (например, id, created_at)
     return db_user
 
@@ -68,7 +81,7 @@ def update_user(db: Session, user: User, update_data: UserUpdate) -> User:
     if update_data.password is not None:
         user.password_hash = hash_password(update_data.password)
 
-    db.commit()
+    _commit(db, "обновлении пользователя")
     db.refresh(user)
     return user
 
@@ -102,11 +115,24 @@ def change_password(db: Session, user: User, current_password: str, new_password
         return False
 
     user.password_hash = hash_password(new_password)
-    db.commit()
+    _commit(db, "смене пароля пользователя")
     return True
 
 
 def delete_user(db: Session, user: User) -> None:
     """Безвозвратно удаляет пользователя из базы данных."""
     db.delete(user)
-    db.commit()
+    _commit(db, "удалении пользователя")
+
+
+def get_all_users(db: Session, skip: int = 0, limit: int = 100) -> list[User]:
+    """Возвращает список всех пользователей с пагинацией (для админки)."""
+    return db.query(User).offset(skip).limit(limit).all()
+
+
+def set_admin(db: Session, user: User, is_admin: bool) -> User:
+    """Устанавливает или снимает флаг администратора для пользователя."""
+    user.is_admin = is_admin
+    _commit(db, "изменении флага администратора")
+    db.refresh(user)
+    return user

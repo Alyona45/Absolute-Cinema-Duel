@@ -1,9 +1,14 @@
+import hashlib
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
+from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
+from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend import settings
@@ -15,12 +20,41 @@ from backend.crud.user import (
     create_user,
     get_user_by_email,
     get_user_by_username,
-    hash_password,
-    verify_password,
 )
 from backend.security import create_access_token, create_refresh_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
+
+
+def _commit_or_raise(db: Session, detail: str) -> None:
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Ошибка БД: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=detail,
+        ) from exc
+
+def get_refresh_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+def get_refresh_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
 
 
 @router.post(
@@ -57,7 +91,7 @@ def login(
     Аутентификация по email + паролю (OAuth2 password flow).
     Возвращает access- и refresh-токены при успехе.
     """
-    # OAuth2PasswordRequestForm использует поле 'username' — трактуем его как email
+    
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -73,21 +107,22 @@ def login(
     expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     session = AuthSession(
         user_id=user.id,
-        refresh_token_hash=hash_password(refresh_token),
+        refresh_token_hash=get_refresh_token_hash(refresh_token),
         expires_at=expires_at,
     )
     db.add(session)
-    db.commit()
+    _commit_or_raise(db, "Unable to create auth session")
 
     return Token(access_token=access_token, refresh_token=refresh_token, token_type="bearer")
 
 
 @router.post("/refresh", response_model=Token)
-def refresh_tokens(refresh_token: str, db: Session = Depends(get_db)) -> Token:
+def refresh_tokens(request: RefreshRequest, db: Session = Depends(get_db)) -> Token:
     """
     Выдаёт новую пару токенов по действующему refresh-токену.
     Старая сессия удаляется — реализован паттерн «ротации refresh-токенов».
     """
+    refresh_token = request.refresh_token
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Недействительный или истёкший refresh-токен",
@@ -110,22 +145,23 @@ def refresh_tokens(refresh_token: str, db: Session = Depends(get_db)) -> Token:
     except JWTError:
         raise credentials_exception from None
 
-    # Ищем сессию, чей хеш соответствует переданному токену
     user = get_user_by_email(db, email)
     if user is None:
         raise credentials_exception
 
-    matching_session: AuthSession | None = None
-    for session in db.query(AuthSession).filter(AuthSession.user_id == user.id).all():
-        if verify_password(refresh_token, session.refresh_token_hash):
-            matching_session = session
-            break
+    token_hash = get_refresh_token_hash(refresh_token)
+    matching_session = db.query(AuthSession).filter(
+        AuthSession.user_id == user.id,
+        AuthSession.refresh_token_hash == token_hash
+    ).first()
 
     if matching_session is None:
         raise credentials_exception
 
-    # Удаляем старую сессию (ротация токенов)
-    db.delete(matching_session)
+    if matching_session.expires_at < datetime.now(timezone.utc):
+        db.delete(matching_session)
+        _commit_or_raise(db, "Unable to invalidate expired refresh token")
+        raise credentials_exception
 
     # Создаём новую пару токенов и новую сессию
     new_access_token = create_access_token(data={"sub": user.email})
@@ -134,10 +170,34 @@ def refresh_tokens(refresh_token: str, db: Session = Depends(get_db)) -> Token:
     expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     new_session = AuthSession(
         user_id=user.id,
-        refresh_token_hash=hash_password(new_refresh_token),
+        refresh_token_hash=get_refresh_token_hash(new_refresh_token),
         expires_at=expires_at,
     )
+
+    # Ротация токенов в одной транзакции: удаляем старую сессию и создаём новую атомарно
+    db.delete(matching_session)
     db.add(new_session)
-    db.commit()
+    _commit_or_raise(db, "Unable to rotate refresh token")
 
     return Token(access_token=new_access_token, refresh_token=new_refresh_token, token_type="bearer")
+
+
+@router.post("/logout", status_code=status.HTTP_200_OK)
+def logout(request: LogoutRequest, db: Session = Depends(get_db)):
+    """
+    Удаляет сессию пользователя (инвалидирует refresh-токен).
+    """
+    token_hash = get_refresh_token_hash(request.refresh_token)
+    session = db.query(AuthSession).filter(AuthSession.refresh_token_hash == token_hash).first()
+
+    if session is None:
+        logger.warning("Logout attempt with invalid refresh token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+
+    db.delete(session)
+    _commit_or_raise(db, "Unable to logout")
+    logger.info("User %s logged out successfully", session.user_id)
+    return {"detail": "Successfully logged out"}

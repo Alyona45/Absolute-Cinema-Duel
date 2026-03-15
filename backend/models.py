@@ -8,6 +8,7 @@ Base = declarative_base()
 
 class SessionStatus(str, enum.Enum):
     CREATED = "CREATED"
+    PLAYING = "PLAYING"
     FINISHED = "FINISHED"
     CANCELLED = "CANCELLED"
     
