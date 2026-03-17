@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend import models
 from backend.database import get_db
-from backend.schemas.movie import GenreResponse, MovieCreate, MovieResponse, MovieUpdate
+from backend.schemas.movie import GenreResponse, MovieCreate, MovieResponse, MovieSearchResult, MovieUpdate
 from backend.crud.movie import (
     get_movie_by_id,
     get_movie_by_kinopoisk_id,
@@ -16,6 +16,7 @@ from backend.crud.movie import (
     sync_movie_genres,
 )
 from backend.security import get_current_user
+from backend.services.movie_service import MovieService
 
 router = APIRouter(prefix="/movies", tags=["movies"])
 
@@ -54,6 +55,16 @@ def read_movie_by_kinopoisk(
             detail="Фильм с таким kinopoisk_id не найден",
         )
     return movie
+
+
+@router.get("/search", response_model=list[MovieSearchResult])
+async def search_movies(
+    query: str,
+    db: Session = Depends(get_db),
+) -> list[MovieSearchResult]:
+    """Возвращает список фильмов из kinopoisk.dev по полной строке поиска."""
+    service = MovieService(db)
+    return await service.search_movies(query)
 
 
 @router.get("/genres/all", response_model=list[GenreResponse])

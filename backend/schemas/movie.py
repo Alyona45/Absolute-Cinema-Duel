@@ -17,6 +17,21 @@ class MovieCreate(BaseModel):
     rating: float | None = None
 
 
+class MovieSearchResult(BaseModel):
+    """Краткий результат поиска фильма во внешнем API."""
+
+    kinopoisk_id: int
+    title: str
+    year: int | None = None
+    poster_url: str | None = None
+
+
+class AddMovieFromKinopoiskRequest(BaseModel):
+    """Schema запроса для добавления фильма в сессию по kinopoisk_id."""
+
+    kinopoisk_id: int
+
+
 class MovieResponse(BaseModel):
     """Schema ответа с данными фильма."""
 

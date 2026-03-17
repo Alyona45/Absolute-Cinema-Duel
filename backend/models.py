@@ -126,8 +126,3 @@ class SessionMovie(Base):
     proposed_by_user = relationship("User")
     # foreign_keys is required because there are two FK paths between session_movies and game_sessions
     session = relationship("GameSession", foreign_keys=[session_id])
-
-    # Уникальный индекс для предотвращения повторов фильмов в одной сессии
-    __table_args__ = (
-        Index('session_movies_unique', 'session_id', 'movie_id', unique=True),
-    )

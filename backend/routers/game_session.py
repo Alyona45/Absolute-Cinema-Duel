@@ -12,6 +12,7 @@ from backend.schemas.game_session import (
     SessionMovieResponse,
     SessionParticipantResponse,
 )
+from backend.schemas.movie import AddMovieFromKinopoiskRequest
 from backend.crud.game_session import (
     create_game_session,
     get_game_session_by_id,
@@ -34,6 +35,7 @@ from backend.crud.session_movie import (
 )
 from backend.models import SessionStatus
 from backend.security import get_current_user
+from backend.services.movie_service import MovieService
 
 router = APIRouter(prefix="/sessions", tags=["game sessions"])
 
@@ -249,6 +251,41 @@ def propose_movie(
             status_code=status.HTTP_409_CONFLICT,
             detail="Этот фильм уже предложен в данной сессии",
         )
+
+
+@router.post(
+    "/{session_id}/movies/from-kinopoisk",
+    response_model=SessionMovieResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def propose_movie_from_kinopoisk(
+    session_id: int,
+    body: AddMovieFromKinopoiskRequest,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+) -> SessionMovieResponse:
+    """
+    Ищет точную карточку фильма по kinopoisk_id, кеширует фильм в локальной БД
+    и добавляет его в игровую сессию.
+    """
+    get_session_or_404(session_id, db)
+
+    if not is_participant(db, session_id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Только участники сессии могут предлагать фильмы",
+        )
+
+    movie_service = MovieService(db)
+    try:
+        movie = await movie_service.get_or_create_movie_by_kinopoisk_id(body.kinopoisk_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return add_movie_to_session(db, session_id, movie.id, current_user.id)
 
 
 @router.delete(

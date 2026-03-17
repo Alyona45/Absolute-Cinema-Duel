@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from backend.models import Movie
 from backend.repositories import MovieRepository
-from backend.schemas.movie import MovieCreate, MovieUpdate
+from backend.schemas.movie import MovieCreate, MovieSearchResult, MovieUpdate
 from backend.services.kinopoisk_client import KinopoiskClient
 
 logger = logging.getLogger(__name__)
@@ -23,32 +23,64 @@ class MovieService:
         self.repository = MovieRepository(db)
         self.kinopoisk_client = kinopoisk_client or KinopoiskClient()
 
-    async def get_movie_by_title(self, title: str) -> Movie | None:
+    async def search_movies(self, title: str, limit: int = 5) -> list[MovieSearchResult]:
         if not title.strip():
-            logger.info("Skipping movie lookup because title is empty")
-            return None
+            logger.info("Skipping movie search because title is empty")
+            return []
 
-        movie = self.repository.get_movie_by_title(title)
+        api_movies = await self.kinopoisk_client.search_movies(title, limit=limit)
+        results: list[MovieSearchResult] = []
+
+        for api_movie in api_movies:
+            kinopoisk_id = api_movie.get("id")
+            movie_title = api_movie.get("name") or api_movie.get("alternativeName")
+            if kinopoisk_id is None or movie_title is None:
+                continue
+
+            poster = api_movie.get("poster") or {}
+            results.append(
+                MovieSearchResult(
+                    kinopoisk_id=kinopoisk_id,
+                    title=movie_title,
+                    year=api_movie.get("year"),
+                    poster_url=poster.get("url") or poster.get("previewUrl"),
+                )
+            )
+
+        return results
+
+    async def get_or_create_movie_by_kinopoisk_id(self, kinopoisk_id: int) -> Movie:
+        movie = self.repository.get_movie_by_kinopoisk_id(kinopoisk_id)
 
         if movie and not self._is_cache_expired(movie.cached_at):
             return movie
 
         try:
-            api_movie = await self.kinopoisk_client.search_movie(title)
+            api_movie = await self.kinopoisk_client.get_movie_by_id(kinopoisk_id)
         except (httpx.HTTPError, httpx.TimeoutException):
             if movie is not None:
-                logger.warning("Kinopoisk request failed, returning stale cache for title=%r", title, exc_info=True)
+                logger.warning(
+                    "Kinopoisk request failed, returning stale cache for kinopoisk_id=%r",
+                    kinopoisk_id,
+                    exc_info=True,
+                )
                 return movie
             raise
 
         if api_movie is None:
-            return movie
+            if movie is not None:
+                return movie
+            raise ValueError(f"Movie with kinopoisk_id={kinopoisk_id} was not found")
 
         try:
             movie_data = self._normalize_api_movie(api_movie)
         except ValueError:
             if movie is not None:
-                logger.warning("Invalid Kinopoisk payload, returning stale cache for title=%r", title, exc_info=True)
+                logger.warning(
+                    "Invalid Kinopoisk payload, returning stale cache for kinopoisk_id=%r",
+                    kinopoisk_id,
+                    exc_info=True,
+                )
                 return movie
             raise
 
