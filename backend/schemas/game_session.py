@@ -12,10 +12,17 @@ class GameSessionResponse(BaseModel):
 
     id: int
     host_user_id: int
+    invite_code: str
     status: SessionStatus
     winner_session_movie_id: int | None = None
     started_at: datetime
     finished_at: datetime | None = None
+
+
+class JoinSessionByCodeRequest(BaseModel):
+    """Schema запроса для входа в игровую сессию по invite_code."""
+
+    invite_code: str
 
 
 class SessionParticipantResponse(BaseModel):

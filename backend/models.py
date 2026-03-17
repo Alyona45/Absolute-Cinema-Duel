@@ -86,6 +86,7 @@ class GameSession(Base):
 
     id = Column(Integer, primary_key=True)
     host_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    invite_code = Column(String(12), nullable=False, unique=True)
     status = Column(SQLEnum(SessionStatus), default=SessionStatus.CREATED)
     winner_session_movie_id = Column(Integer, ForeignKey('session_movies.id'))
     started_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())

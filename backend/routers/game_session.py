@@ -8,12 +8,14 @@ from backend import models
 from backend.database import get_db
 from backend.schemas.game_session import (
     GameSessionResponse,
+    JoinSessionByCodeRequest,
     SessionMovieResponse,
     SessionParticipantResponse,
 )
 from backend.crud.game_session import (
     create_game_session,
     get_game_session_by_id,
+    get_game_session_by_invite_code,
     get_sessions_by_user,
     update_session_status,
     set_winner,
@@ -64,6 +66,40 @@ def create_session(
 ) -> GameSessionResponse:
     """Создаёт новую игровую сессию. Текущий пользователь становится хостом."""
     return create_game_session(db, host_user_id=current_user.id)
+
+
+@router.post(
+    "/join-by-code",
+    response_model=SessionParticipantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def join_session_by_code(
+    body: JoinSessionByCodeRequest,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+) -> SessionParticipantResponse:
+    """Добавляет текущего пользователя в сессию по invite_code."""
+    game_session = get_game_session_by_invite_code(db, body.invite_code)
+    if not game_session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Игровая сессия не найдена",
+        )
+
+    if is_participant(db, game_session.id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Вы уже являетесь участником этой сессии",
+        )
+
+    try:
+        return add_participant(db, game_session.id, current_user.id)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Вы уже являетесь участником этой сессии",
+        )
 
 
 @router.get("/my/list", response_model=list[GameSessionResponse])
