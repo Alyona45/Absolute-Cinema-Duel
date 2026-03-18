@@ -33,6 +33,19 @@ class SessionParticipantResponse(BaseModel):
     id: int
     user_id: int
     session_id: int
+    selected_session_movie_id: int | None = None
+
+
+class SelectParticipantMovieRequest(BaseModel):
+    """Schema запроса для выбора фильма участником в рамках сессии."""
+
+    session_movie_id: int
+
+
+class SelectWinnerParticipantRequest(BaseModel):
+    """Schema запроса для выбора победителя по user_id участника сессии."""
+
+    winner_user_id: int
 
 
 class SessionMovieResponse(BaseModel):

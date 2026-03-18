@@ -29,6 +29,15 @@ def _get_participant(db: Session, session_id: int, user_id: int) -> SessionParti
     )
 
 
+def get_participant_by_session_and_user(
+    db: Session,
+    session_id: int,
+    user_id: int,
+) -> SessionParticipant | None:
+    """Возвращает участника сессии по паре (session_id, user_id) или None."""
+    return _get_participant(db, session_id, user_id)
+
+
 def add_participant(db: Session, session_id: int, user_id: int) -> SessionParticipant:
     """
     Добавляет пользователя в игровую сессию.
@@ -71,3 +80,15 @@ def is_participant(db: Session, session_id: int, user_id: int) -> bool:
     Возвращает True, если запись найдена, иначе False.
     """
     return _get_participant(db, session_id, user_id) is not None
+
+
+def set_selected_session_movie(
+    db: Session,
+    participant: SessionParticipant,
+    session_movie_id: int,
+) -> SessionParticipant:
+    """Устанавливает выбранный участником фильм в рамках сессии."""
+    participant.selected_session_movie_id = session_movie_id
+    _commit(db, "выборе фильма участником")
+    db.refresh(participant)
+    return participant

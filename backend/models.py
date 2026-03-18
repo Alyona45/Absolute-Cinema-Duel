@@ -1,7 +1,6 @@
 import enum
 from sqlalchemy import Boolean, Column, Enum as SQLEnum, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP
-from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
 Base = declarative_base()
@@ -58,7 +57,7 @@ class Movie(Base):
     runtime = Column(Integer)
     rating = Column(Float)
     cached_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
-    genre_links = relationship("MovieGenre")
+    genre_links = relationship("MovieGenre", back_populates="movie")
 
 class Genre(Base):
     __tablename__ = 'genres'
@@ -73,7 +72,7 @@ class MovieGenre(Base):
     movie_id = Column(Integer, ForeignKey('movies.id'), nullable=False)
     genre_id = Column(Integer, ForeignKey('genres.id'), nullable=False)
 
-    movie = relationship("Movie")
+    movie = relationship("Movie", back_populates="genre_links")
     genre = relationship("Genre")
 
     # Уникальный составной индекс для предотвращения повторов в movie_id и genre_id
@@ -105,9 +104,11 @@ class SessionParticipant(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     session_id = Column(Integer, ForeignKey('game_sessions.id'), nullable=False)
+    selected_session_movie_id = Column(Integer, ForeignKey('session_movies.id'))
 
     user = relationship("User")
     session = relationship("GameSession")
+    selected_session_movie = relationship("SessionMovie", foreign_keys=[selected_session_movie_id])
 
     # Уникальный индекс для предотвращения дублирования участников
     __table_args__ = (
