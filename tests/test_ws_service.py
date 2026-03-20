@@ -1,10 +1,14 @@
+import asyncio
 from types import SimpleNamespace
+
+import pytest
 
 from backend.actors import CurrentActor, runtime_user_id_for_actor
 from backend.websocket.manager import ConnectionManager
-from backend.websocket.models import Participant
+from backend.websocket.models import Participant, RoomStatus
 from backend.websocket.room import RoomManager
 from backend.websocket.service import WsRoomService
+from backend.services.errors import InvalidOperationError
 
 
 class DummyDB:
@@ -134,3 +138,45 @@ def test_guest_join_db_backed_session_is_allowed(monkeypatch) -> None:
 
     assert payload["username"] == "guest"
     assert payload["user_id"] == runtime_user_id_for_actor(actor)
+
+
+def test_start_room_rolls_back_runtime_status_on_db_error(monkeypatch) -> None:
+    room_manager = RoomManager()
+    service = WsRoomService(
+        db=DummyDB(),
+        room_manager=room_manager,
+        connection_manager=ConnectionManager(),
+    )
+
+    room_manager.create_room(
+        host_username="host",
+        is_guest=False,
+        email="host@example.com",
+        room_id="ABC123",
+        user_id="7",
+    )
+
+    actor = CurrentActor(
+        user_id=7,
+        guest_id=None,
+        display_name="host",
+        email="host@example.com",
+    )
+
+    def _raise_start_error(self, invite_code, actor_obj):
+        raise InvalidOperationError("db start failed")
+
+    monkeypatch.setattr(
+        "backend.websocket.service.GameSessionService.start_session_by_invite_code",
+        _raise_start_error,
+    )
+
+    async def _run() -> None:
+        with pytest.raises(InvalidOperationError, match="db start failed"):
+            await service.start_room(room_id="ABC123", actor=actor)
+
+    asyncio.run(_run())
+
+    room = room_manager.get_room("ABC123")
+    assert room is not None
+    assert room.status == RoomStatus.WAITING

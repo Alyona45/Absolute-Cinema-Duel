@@ -19,7 +19,7 @@ from backend.services.errors import (
 )
 from backend.services.game_session_service import GameSessionService
 from backend.websocket.manager import ConnectionManager
-from backend.websocket.models import Participant, Room
+from backend.websocket.models import Participant, Room, RoomStatus
 from backend.websocket.room import RoomManager
 
 logger = logging.getLogger(__name__)
@@ -85,11 +85,18 @@ class WsRoomService:
         if room is None:
             raise SessionNotFoundError("Комната не найдена")
 
-        self.game_session_service.start_session_by_invite_code(room_id, actor)
+        if room.status != RoomStatus.WAITING:
+            raise InvalidOperationError("Невозможно начать игру (неверный статус комнаты)")
 
         ok = self.room_manager.start_game(room_id)
         if not ok:
             raise InvalidOperationError("Невозможно начать игру (неверный статус комнаты)")
+
+        try:
+            self.game_session_service.start_session_by_invite_code(room_id, actor)
+        except Exception:
+            self._rollback_runtime_start(room_id)
+            raise
 
         participants = self.room_manager.participant_ids(room_id)
         from backend.websocket.protocol import serialize_game_started
@@ -100,6 +107,14 @@ class WsRoomService:
             logger.error("Не удалось отправить GAME_STARTED %s пользователям: %s", len(failed), failed)
             raise InvalidOperationError("Игра запущена, но не все участники получили уведомление")
         return {"status": "ok"}
+
+    def _rollback_runtime_start(self, room_id: str) -> None:
+        room = self.room_manager.get_room(room_id)
+        if room is None:
+            return
+        if room.status == RoomStatus.PLAYING:
+            room.status = RoomStatus.WAITING
+            room.touch()
 
     def get_room(self, room_id: str) -> dict:
         room = self.ensure_runtime_room(room_id)

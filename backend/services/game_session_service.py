@@ -110,8 +110,11 @@ class GameSessionService:
 
         movie_service = MovieService(self.db)
         movie = await movie_service.get_or_create_movie_by_kinopoisk_id(kinopoisk_id)
-
-        return add_movie_to_session(self.db, session_id, movie.id, participant.id)
+        try:
+            return add_movie_to_session(self.db, session_id, movie.id, participant.id)
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise InvalidOperationError("Фильм уже добавлен в игровую сессию") from exc
 
     def retract_movie(self, session_id: int, session_movie_id: int, actor: CurrentActor) -> None:
         session_movie = get_session_movie_by_id(self.db, session_movie_id)
@@ -160,6 +163,9 @@ class GameSessionService:
             raise AccessDeniedError("Только хост может запустить игровую сессию")
 
         participants = get_participants_by_session(self.db, game_session.id)
+        if len(participants) < 2:
+            raise InvalidOperationError("Для старта необходимо минимум 2 участника")
+
         participants_without_selection = [
             participant.id
             for participant in participants

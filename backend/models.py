@@ -145,6 +145,9 @@ class SessionMovie(Base):
     proposed_by_participant_id = Column(Integer, ForeignKey('session_participants.id'), nullable=False)
 
     movie = relationship("Movie")
-    proposed_by_participant = relationship("SessionParticipant")
+    proposed_by_participant = relationship(
+        "SessionParticipant",
+        foreign_keys=[proposed_by_participant_id],
+    )
     # foreign_keys is required because there are two FK paths between session_movies and game_sessions
     session = relationship("GameSession", foreign_keys=[session_id])

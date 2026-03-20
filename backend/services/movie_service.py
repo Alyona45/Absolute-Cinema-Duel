@@ -8,6 +8,7 @@ from backend.models import Movie
 from backend.repositories import MovieRepository
 from backend.schemas.movie import MovieCreate, MovieSearchResult, MovieUpdate
 from backend.services.kinopoisk_client import KinopoiskClient
+from backend.services.errors import MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ class MovieService:
         if api_movie is None:
             if movie is not None:
                 return movie
-            raise ValueError(f"Movie with kinopoisk_id={kinopoisk_id} was not found")
+            raise MovieNotFoundError(f"Movie with kinopoisk_id={kinopoisk_id} was not found")
 
         try:
             movie_data = self._normalize_api_movie(api_movie)

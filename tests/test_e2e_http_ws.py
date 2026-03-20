@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.websockets import WebSocketDisconnect
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -11,6 +12,7 @@ from backend.database import get_db
 from backend.main import app
 from backend.models import Base
 from backend.routers.ws import conn_manager, room_manager
+from backend.services.errors import MovieNotFoundError
 
 
 @pytest.fixture
@@ -77,6 +79,18 @@ def _create_room(client: TestClient, auth_header: str) -> tuple[str, str]:
         headers={"Authorization": auth_header},
     )
     assert response.status_code == 201, response.text
+
+    body = response.json()
+    return body["room_id"], body["user_id"]
+
+
+def _create_guest_room(client: TestClient, username: str) -> tuple[str, str]:
+    response = client.post(
+        "/rooms",
+        json={"username": username},
+    )
+    assert response.status_code == 201, response.text
+    assert "guest_token=" in response.headers.get("set-cookie", "")
 
     body = response.json()
     return body["room_id"], body["user_id"]
@@ -434,3 +448,135 @@ def test_e2e_start_session_denied_when_not_all_selected(client: TestClient) -> N
 
     assert start_response.status_code == 400, start_response.text
     assert "каждый участник" in start_response.json()["detail"]
+
+
+def test_e2e_guest_host_can_connect_ws_without_jwt(client: TestClient) -> None:
+    room_id, guest_user_id = _create_guest_room(client, username="GuestHost")
+
+    assert guest_user_id.startswith("guest:")
+
+    with client.websocket_connect(f"/ws/{room_id}/{guest_user_id}") as ws:
+        room_state = ws.receive_json()
+
+    assert room_state["type"] == "ROOM_STATE"
+    assert room_state["payload"]["host_user_id"] == guest_user_id
+
+
+def test_e2e_second_guest_can_join_and_connect_without_jwt(client: TestClient) -> None:
+    room_id, host_guest_user_id = _create_guest_room(client, username="GuestHost")
+
+    with TestClient(app) as second_guest_client:
+        join_response = second_guest_client.post(
+            f"/rooms/{room_id}/join",
+            json={"username": "GuestTwo"},
+        )
+        assert join_response.status_code == 201, join_response.text
+        assert "guest_token=" in join_response.headers.get("set-cookie", "")
+
+        second_guest_user_id = join_response.json()["user_id"]
+        assert second_guest_user_id.startswith("guest:")
+
+        with client.websocket_connect(f"/ws/{room_id}/{host_guest_user_id}") as host_ws:
+            host_ws.receive_json()
+            with second_guest_client.websocket_connect(
+                f"/ws/{room_id}/{second_guest_user_id}"
+            ) as second_ws:
+                second_ws.receive_json()
+                joined_event = host_ws.receive_json()
+
+    assert joined_event["type"] == "PLAYER_JOINED"
+    assert joined_event["payload"]["user_id"] == second_guest_user_id
+
+
+def test_e2e_guest_host_start_requires_minimum_two_participants(client: TestClient) -> None:
+    room_id, _ = _create_guest_room(client, username="SoloGuestHost")
+
+    start_response = client.post(f"/rooms/{room_id}/start")
+
+    assert start_response.status_code == 400, start_response.text
+    assert "минимум 2 участника" in start_response.json()["detail"]
+
+
+def test_e2e_create_room_maps_runtime_error_to_503(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_runtime_error(self, actor):
+        raise RuntimeError("invite codes are exhausted")
+
+    monkeypatch.setattr(
+        "backend.routers.ws.WsRoomService.create_room",
+        _raise_runtime_error,
+    )
+
+    response = client.post("/rooms", json={"username": "guest"})
+
+    assert response.status_code == 503, response.text
+    assert "invite codes" in response.json()["detail"]
+
+
+def test_e2e_create_room_maps_value_error_to_409(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_value_error(self, actor):
+        raise ValueError("Room with id already exists")
+
+    monkeypatch.setattr(
+        "backend.routers.ws.WsRoomService.create_room",
+        _raise_value_error,
+    )
+
+    response = client.post("/rooms", json={"username": "guest"})
+
+    assert response.status_code == 409, response.text
+    assert "already exists" in response.json()["detail"]
+
+
+def test_e2e_create_room_maps_sqlalchemy_error_to_500(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_sqlalchemy_error(self, actor):
+        raise SQLAlchemyError("db down")
+
+    monkeypatch.setattr(
+        "backend.routers.ws.WsRoomService.create_room",
+        _raise_sqlalchemy_error,
+    )
+
+    response = client.post("/rooms", json={"username": "guest"})
+
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"] == "Ошибка базы данных"
+
+
+def test_e2e_kinopoisk_not_found_maps_to_404(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_auth = _register_and_login(
+        client,
+        email="host9@example.com",
+        username="host9",
+        password="Password123",
+    )
+    room_id, _ = _create_room(client, host_auth["auth_header"])
+    session_id = _get_session_id_by_invite_code(client, host_auth["auth_header"], room_id)
+
+    async def _raise_not_found(self, session_id, kinopoisk_id, actor):
+        raise MovieNotFoundError("Movie with kinopoisk_id=123 was not found")
+
+    monkeypatch.setattr(
+        "backend.services.game_session_service.GameSessionService.propose_movie_from_kinopoisk",
+        _raise_not_found,
+    )
+
+    response = client.post(
+        f"/sessions/{session_id}/movies/from-kinopoisk",
+        json={"kinopoisk_id": 123},
+        headers={"Authorization": host_auth["auth_header"]},
+    )
+
+    assert response.status_code == 404, response.text
+    assert "was not found" in response.json()["detail"]

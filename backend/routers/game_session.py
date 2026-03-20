@@ -20,6 +20,7 @@ from backend.services.errors import (
     AccessDeniedError,
     AlreadyParticipantError,
     InvalidOperationError,
+    MovieNotFoundError,
     ParticipantNotFoundError,
     SessionMovieNotFoundError,
     SessionNotFoundError,
@@ -250,7 +251,7 @@ async def propose_movie_from_kinopoisk(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except AccessDeniedError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    except ValueError as exc:
+    except MovieNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),

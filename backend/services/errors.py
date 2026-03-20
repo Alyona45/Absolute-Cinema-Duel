@@ -24,3 +24,7 @@ class SessionMovieNotFoundError(ServiceError):
 
 class InvalidOperationError(ServiceError):
     pass
+
+
+class MovieNotFoundError(ServiceError):
+    pass

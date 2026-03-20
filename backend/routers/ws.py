@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.actors import CurrentActor
@@ -59,12 +60,20 @@ def create_room(
     current_actor: CurrentActor | None = Depends(get_current_actor_optional),
     service: WsRoomService = Depends(get_ws_room_service),
 ):
-    actor = ensure_guest_actor(
-        response,
-        current_actor,
-        display_name=body.username if body else None,
-    )
-    return service.create_room(actor=actor)
+    try:
+        actor = ensure_guest_actor(
+            response,
+            current_actor,
+            display_name=body.username if body else None,
+        )
+        return service.create_room(actor=actor)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.exception("Ошибка БД при создании комнаты")
+        raise HTTPException(status_code=500, detail="Ошибка базы данных") from exc
 
 
 @router.post("/rooms/{room_id}/join", status_code=201)
