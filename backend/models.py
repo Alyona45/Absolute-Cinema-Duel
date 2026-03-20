@@ -1,5 +1,17 @@
 import enum
-from sqlalchemy import Boolean, Column, Enum as SQLEnum, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    Enum as SQLEnum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    TIMESTAMP,
+)
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
@@ -84,7 +96,7 @@ class GameSession(Base):
     __tablename__ = 'game_sessions'
 
     id = Column(Integer, primary_key=True)
-    host_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    host_user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
     invite_code = Column(String(12), nullable=False, unique=True)
     status = Column(SQLEnum(SessionStatus), default=SessionStatus.CREATED)
     winner_session_movie_id = Column(Integer, ForeignKey('session_movies.id'))
@@ -102,8 +114,11 @@ class SessionParticipant(Base):
     __tablename__ = 'session_participants'
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    guest_id = Column(String(64), nullable=True)
     session_id = Column(Integer, ForeignKey('game_sessions.id'), nullable=False)
+    display_name = Column(String(64), nullable=False)
+    is_host = Column(Boolean, nullable=False, default=False)
     selected_session_movie_id = Column(Integer, ForeignKey('session_movies.id'))
 
     user = relationship("User")
@@ -112,7 +127,13 @@ class SessionParticipant(Base):
 
     # Уникальный индекс для предотвращения дублирования участников
     __table_args__ = (
-        Index('session_participants_unique', 'session_id', 'user_id', unique=True),
+        CheckConstraint(
+            "(user_id IS NOT NULL AND guest_id IS NULL) OR "
+            "(user_id IS NULL AND guest_id IS NOT NULL)",
+            name="ck_session_participants_exactly_one_identity",
+        ),
+        Index('session_participants_user_unique', 'session_id', 'user_id', unique=True),
+        Index('session_participants_guest_unique', 'session_id', 'guest_id', unique=True),
     )
 
 class SessionMovie(Base):
@@ -121,9 +142,9 @@ class SessionMovie(Base):
     id = Column(Integer, primary_key=True)
     session_id = Column(Integer, ForeignKey('game_sessions.id'), nullable=False)
     movie_id = Column(Integer, ForeignKey('movies.id'), nullable=False)
-    proposed_by_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    proposed_by_participant_id = Column(Integer, ForeignKey('session_participants.id'), nullable=False)
 
     movie = relationship("Movie")
-    proposed_by_user = relationship("User")
+    proposed_by_participant = relationship("SessionParticipant")
     # foreign_keys is required because there are two FK paths between session_movies and game_sessions
     session = relationship("GameSession", foreign_keys=[session_id])

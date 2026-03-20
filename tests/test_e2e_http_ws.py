@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -32,11 +33,19 @@ def client(tmp_path: Path):
     app.dependency_overrides[get_db] = override_get_db
     room_manager.rooms.clear()
     conn_manager.connections.clear()
+    original_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def noop_lifespan(_app):
+        yield
+
+    app.router.lifespan_context = noop_lifespan
 
     with TestClient(app) as test_client:
         yield test_client
 
     app.dependency_overrides.clear()
+    app.router.lifespan_context = original_lifespan
     room_manager.rooms.clear()
     conn_manager.connections.clear()
     engine.dispose()
@@ -366,7 +375,7 @@ def test_e2e_pick_winner_by_participant_uses_selected_movie(client: TestClient) 
     assert join_by_code_response.status_code == 201, join_by_code_response.text
     session_participant = join_by_code_response.json()
     session_id = session_participant["session_id"]
-    participant_user_id = session_participant["user_id"]
+    participant_id = session_participant["id"]
 
     movie_id = _create_movie(
         client,
@@ -384,7 +393,7 @@ def test_e2e_pick_winner_by_participant_uses_selected_movie(client: TestClient) 
 
     finalize_response = client.post(
         f"/sessions/{session_id}/winner/by-participant",
-        json={"winner_user_id": participant_user_id},
+        json={"winner_participant_id": participant_id},
         headers={"Authorization": host_auth["auth_header"]},
     )
 

@@ -1,13 +1,13 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
-from backend import models
+from backend.actors import CurrentActor
 from backend.database import get_db
-from backend.security import get_current_user_optional
+from backend.security import ensure_guest_actor, get_current_actor, get_current_actor_optional
 from backend.websocket.manager import ConnectionManager
 from backend.websocket.auth import validate_ws_participant_token
 from backend.websocket.protocol import (
@@ -54,26 +54,34 @@ def get_ws_room_service(db: Session = Depends(get_db)) -> WsRoomService:
 
 @router.post("/rooms", status_code=201)
 def create_room(
+    response: Response,
     body: RoomBody | None = None,
-    current_user: models.User | None = Depends(get_current_user_optional),
+    current_actor: CurrentActor | None = Depends(get_current_actor_optional),
     service: WsRoomService = Depends(get_ws_room_service),
 ):
-    return service.create_room(current_user=current_user, username=body.username if body else None)
+    actor = ensure_guest_actor(
+        response,
+        current_actor,
+        display_name=body.username if body else None,
+    )
+    return service.create_room(actor=actor)
 
 
 @router.post("/rooms/{room_id}/join", status_code=201)
 def join_room(
     room_id: str,
+    response: Response,
     body: RoomBody | None = None,
-    current_user: models.User | None = Depends(get_current_user_optional),
+    current_actor: CurrentActor | None = Depends(get_current_actor_optional),
     service: WsRoomService = Depends(get_ws_room_service),
 ):
     try:
-        return service.join_room(
-            room_id=room_id,
-            current_user=current_user,
-            username=body.username if body else None,
+        actor = ensure_guest_actor(
+            response,
+            current_actor,
+            display_name=body.username if body else None,
         )
+        return service.join_room(room_id=room_id, actor=actor)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvalidOperationError as exc:
@@ -86,12 +94,11 @@ def join_room(
 @router.post("/rooms/{room_id}/start")
 async def start_room(
     room_id: str,
-    user_id: str | None = None,
-    current_user: models.User | None = Depends(get_current_user_optional),
+    current_actor: CurrentActor = Depends(get_current_actor),
     service: WsRoomService = Depends(get_ws_room_service),
 ):
     try:
-        return await service.start_room(room_id=room_id, user_id=user_id, current_user=current_user)
+        return await service.start_room(room_id=room_id, actor=current_actor)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except AccessDeniedError as exc:

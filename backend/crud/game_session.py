@@ -6,6 +6,7 @@ import string
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from backend.actors import CurrentActor
 from backend.models import GameSession, SessionParticipant, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ def _commit(db: Session, action: str) -> None:
         raise
 
 
-def create_game_session(db: Session, host_user_id: int) -> GameSession:
+def create_game_session(db: Session, host_actor: CurrentActor) -> GameSession:
     """
     Создаёт новую игровую сессию.
     Статус по умолчанию — CREATED, время старта проставляется автоматически.
@@ -34,10 +35,21 @@ def create_game_session(db: Session, host_user_id: int) -> GameSession:
         if get_game_session_by_invite_code(db, invite_code) is not None:
             continue
 
-        session = GameSession(host_user_id=host_user_id, invite_code=invite_code)
+        session = GameSession(
+            host_user_id=host_actor.user_id,
+            invite_code=invite_code,
+        )
         db.add(session)
         db.flush()
-        db.add(SessionParticipant(session_id=session.id, user_id=host_user_id))
+        db.add(
+            SessionParticipant(
+                session_id=session.id,
+                user_id=host_actor.user_id,
+                guest_id=host_actor.guest_id,
+                display_name=host_actor.display_name,
+                is_host=True,
+            )
+        )
         _commit(db, "создании игровой сессии")
         db.refresh(session)
         return session

@@ -11,7 +11,7 @@ class GameSessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    host_user_id: int
+    host_user_id: int | None
     invite_code: str
     status: SessionStatus
     winner_session_movie_id: int | None = None
@@ -31,8 +31,11 @@ class SessionParticipantResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
+    user_id: int | None
+    guest_id: str | None
     session_id: int
+    display_name: str
+    is_host: bool
     selected_session_movie_id: int | None = None
 
 
@@ -43,9 +46,9 @@ class SelectParticipantMovieRequest(BaseModel):
 
 
 class SelectWinnerParticipantRequest(BaseModel):
-    """Schema запроса для выбора победителя по user_id участника сессии."""
+    """Schema запроса для выбора победителя по participant_id участника сессии."""
 
-    winner_user_id: int
+    winner_participant_id: int
 
 
 class SessionMovieResponse(BaseModel):
@@ -56,4 +59,4 @@ class SessionMovieResponse(BaseModel):
     id: int
     session_id: int
     movie_id: int
-    proposed_by_user_id: int
+    proposed_by_participant_id: int
