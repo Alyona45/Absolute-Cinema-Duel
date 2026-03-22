@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <title>Flappy — Test Client</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #1a1a2e; color: #eee; padding: 16px; }
+    h2 { margin-bottom: 12px; color: #e94560; }
+    .panel { background: #16213e; border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+    .row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 8px; }
+    label { font-size: 12px; color: #aaa; display: block; margin-bottom: 3px; }
+    input { background: #0f3460; border: 1px solid #444; color: #fff; padding: 5px 8px; border-radius: 4px; width: 100%; }
+    button { background: #e94560; border: none; color: #fff; padding: 7px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; white-space: nowrap; }
+    button:hover { opacity: 0.85; }
+    button.sec { background: #0f3460; }
+    .log { background: #0a0a1a; border-radius: 6px; padding: 10px; font-size: 12px; font-family: monospace; height: 90px; overflow-y: auto; margin-bottom: 4px; }
+    .log .ok  { color: #4ecca3; }
+    .log .err { color: #e94560; }
+    .log .inf { color: #aaa; }
+    canvas { background: #87ceeb; display: block; border: 2px solid #333; border-radius: 4px; }
+    #statusBadge { font-size: 12px; padding: 3px 10px; border-radius: 10px; background: #333; }
+    #statusBadge.ok { background: #1e7a4a; }
+    #statusBadge.err { background: #7a1e1e; }
+    .hint { font-size: 11px; color: #666; margin-top: 4px; }
+  </style>
+</head>
+<body>
+<h2>🐦 Flappy — Test Client</h2>
+
+<div class="panel">
+  <b>Шаг 1. Создать сессию (хост)</b>
+  <div class="row" style="margin-top:8px">
+    <div><label>Сервер</label><input id="serverUrl" value="http://localhost:8000" style="width:220px"></div>
+    <button id="btnCreate">POST /sessions/</button>
+  </div>
+  <div class="row">
+    <div style="flex:1"><label>Session ID</label><input id="sessionId" readonly placeholder="после создания"></div>
+    <div style="flex:1"><label>Invite-код (передай второму игроку)</label><input id="inviteCode" readonly placeholder="после создания"></div>
+  </div>
+</div>
+
+<div class="panel">
+  <b>Шаг 2. Присоединиться (второй игрок — открой в другой вкладке)</b>
+  <div class="row" style="margin-top:8px">
+    <div style="flex:1"><label>Invite-код</label><input id="joinCode" placeholder="вставь код от хоста"></div>
+    <button id="btnJoin" class="sec">POST /sessions/join-by-code</button>
+  </div>
+</div>
+
+<div class="panel">
+  <b>Шаг 3. Старт + игра (хост)</b>
+  <div class="row" style="margin-top:8px">
+    <button id="btnStart">Start game</button>
+    <button id="btnConnect" class="sec">Connect WS</button>
+    <button id="btnJump">Jump (Space)</button>
+    <span id="statusBadge">ws: off</span>
+  </div>
+  <div class="hint">⚠️ Открывай только через http://localhost:8000/static/flappy_client.html — не через file:///</div>
+</div>
+
+<div class="log" id="log"></div>
+<div style="font-size:11px;color:#555;margin-bottom:6px">
+  Мой player_id (runtime user id из /sessions/{id}/participants → user_id или guest:...):
+  <input id="myPlayerId" style="background:#111;border:1px solid #333;color:#999;padding:2px 6px;width:260px" placeholder="заполнится автоматически">
+</div>
+
+<canvas id="canvas" width="800" height="400"></canvas>
+
+<script>
+  function log(msg, cls='inf') {
+    const el = document.getElementById('log');
+    const d = document.createElement('div');
+    d.className = cls;
+    d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+    el.appendChild(d);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function server() { return document.getElementById('serverUrl').value.replace(/\/$/, ''); }
+
+  async function api(path, opts={}) {
+    const res = await fetch(server() + path, {
+      credentials: 'include',           // <-- отправляет cookie автоматически
+      headers: { 'Content-Type': 'application/json' },
+      ...opts,
+    });
+    const text = await res.text();
+    let data; try { data = JSON.parse(text); } catch { data = text; }
+    if (!res.ok) throw new Error(res.status + ': ' + JSON.stringify(data));
+    return data;
+  }
+
+  // Шаг 1
+  document.getElementById('btnCreate').addEventListener('click', async () => {
+    try {
+      const d = await api('/sessions/', { method: 'POST' });
+      document.getElementById('sessionId').value  = d.id;
+      document.getElementById('inviteCode').value = d.invite_code;
+      log('Сессия создана id=' + d.id + ' invite=' + d.invite_code, 'ok');
+      // Получаем участников чтобы узнать свой player_id
+      await loadMyPlayerId(d.id);
+    } catch(e) { log('Ошибка: ' + e.message, 'err'); }
+  });
+
+  // Шаг 2
+  document.getElementById('btnJoin').addEventListener('click', async () => {
+    const code = document.getElementById('joinCode').value.trim();
+    if (!code) { log('Введи invite-код', 'err'); return; }
+    try {
+      const d = await api('/sessions/join-by-code', {
+        method: 'POST',
+        body: JSON.stringify({ invite_code: code }),
+      });
+      document.getElementById('sessionId').value = d.session_id;
+      log('Присоединился к сессии ' + d.session_id, 'ok');
+      await loadMyPlayerId(d.session_id);
+    } catch(e) { log('Ошибка join: ' + e.message, 'err'); }
+  });
+
+  async function loadMyPlayerId(sessionId) {
+    try {
+      const parts = await api('/sessions/' + sessionId + '/participants');
+      // Последний участник — скорее всего мы (только что добавились)
+      if (parts.length > 0) {
+        const me = parts[parts.length - 1];
+        // runtime user id: для зарегистрированных — str(user_id), для гостей — "guest:<guest_id>"
+        const rid = me.user_id ? String(me.user_id) : 'guest:' + me.guest_id;
+        document.getElementById('myPlayerId').value = rid;
+        log('Мой player_id: ' + rid, 'inf');
+      }
+    } catch(e) { log('Не удалось получить participants: ' + e.message, 'err'); }
+  }
+
+  // Шаг 3a: старт
+  document.getElementById('btnStart').addEventListener('click', async () => {
+    const sid = document.getElementById('sessionId').value.trim();
+    if (!sid) { log('Нет session ID', 'err'); return; }
+    try {
+      await api('/sessions/' + sid + '/start-game', { method: 'POST' });
+      log('Игра запущена!', 'ok');
+    } catch(e) { log('Ошибка старта: ' + e.message, 'err'); }
+  });
+
+  // Шаг 3b: подключить WS
+  let ws = null;
+  let gameState = { players: {}, pipes: [], running: false };
+
+  document.getElementById('btnConnect').addEventListener('click', () => {
+    const sid = document.getElementById('sessionId').value.trim();
+    if (!sid) { log('Нет session ID', 'err'); return; }
+    if (ws) { ws.close(); ws = null; }
+    const url = server().replace(/^http/, 'ws') + '/ws/game/flappy/' + sid;
+    log('WS → ' + url);
+    ws = new WebSocket(url);
+    ws.onopen  = () => { setBadge('ok', 'connected'); log('WS открыт', 'ok'); };
+    ws.onclose = (e) => { setBadge('', 'closed ' + e.code + ' ' + e.reason); log('WS закрыт ' + e.code + ' ' + e.reason, 'err'); };
+    ws.onerror = () => { setBadge('err', 'error'); log('WS error', 'err'); };
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'state') {
+          gameState.players = msg.players || {};
+          gameState.pipes   = msg.pipes   || [];
+          gameState.running = msg.running;
+        } else if (msg.type === 'game_over') {
+          gameState.running = false;
+          log('Game Over! Победитель: ' + (msg.winner_id || 'никто'), 'ok');
+        }
+      } catch(e) { console.error(e); }
+      render();
+    };
+  });
+
+  function setBadge(cls, text) {
+    const el = document.getElementById('statusBadge');
+    el.textContent = 'ws: ' + text;
+    el.className = cls;
+  }
+
+  function jump() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const pid = document.getElementById('myPlayerId').value;
+    ws.send(JSON.stringify({ action: 'jump', player_id: pid }));
+  }
+  document.getElementById('btnJump').addEventListener('click', jump);
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
+  });
+
+  // ─── Canvas ───────────────────────────────────────────────
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const COLORS = ['#FFD700','#FF6B6B','#4ECDC4','#A8E6CF'];
+
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#87ceeb'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#8B6914'; ctx.fillRect(0, H-20, W, 20);
+    ctx.fillStyle = '#5a8a3c'; ctx.fillRect(0, H-22, W, 4);
+
+    for (const p of gameState.pipes) {
+      const {x, gap_y: gy, width: pw=52, gap_height: gh=120} = p;
+      ctx.fillStyle = '#2e8b57';
+      ctx.fillRect(x, 0, pw, gy);
+      ctx.fillRect(x, gy+gh, pw, H-gy-gh);
+      ctx.fillStyle = '#3aad6a';
+      ctx.fillRect(x-4, gy-16, pw+8, 16);
+      ctx.fillRect(x-4, gy+gh, pw+8, 16);
+    }
+
+    const ids = Object.keys(gameState.players);
+    ids.forEach((id, i) => {
+      const pl = gameState.players[id];
+      const bx=150, by=pl.y||0, r=10;
+      const color = COLORS[i % COLORS.length];
+      ctx.save();
+      ctx.globalAlpha = pl.alive ? 1 : 0.3;
+      ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI*2);
+      ctx.fillStyle = pl.alive ? color : '#888'; ctx.fill();
+      if (pl.alive) {
+        ctx.beginPath(); ctx.arc(bx+4, by-2, 3, 0, Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+        ctx.beginPath(); ctx.arc(bx+5, by-2, 1.5, 0, Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
+      }
+      ctx.globalAlpha=1;
+      ctx.fillStyle=color; ctx.font='bold 11px Arial'; ctx.textAlign='center';
+      ctx.fillText(id.slice(0,10)+' ['+( pl.score||0)+']', bx, by-14);
+      ctx.restore();
+    });
+
+    if (!gameState.running && ids.length > 0) {
+      ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(W/2-100,H/2-28,200,56);
+      ctx.fillStyle='#fff'; ctx.font='bold 24px Arial'; ctx.textAlign='center';
+      ctx.fillText('Game Over', W/2, H/2+8);
+    }
+  }
+  setInterval(render, 1000/30);
+</script>
+</body>
+</html>

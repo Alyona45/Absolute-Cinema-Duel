@@ -1,7 +1,7 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.actors import CurrentActor
+from backend.actors import CurrentActor, runtime_user_id_for_actor, runtime_user_id_for_participant
 from backend.crud.game_session import (
     create_game_session,
     get_game_session_by_id,
@@ -36,14 +36,70 @@ from backend.services.errors import (
     SessionNotFoundError,
 )
 from backend.services.movie_service import MovieService
+from backend.websocket.room import RoomManager
+from backend.websocket.models import Participant
 
 
 class GameSessionService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, room_manager: RoomManager | None = None) -> None:
         self.db = db
+        self._room_manager = room_manager
+
+    # ─────────────────── room_manager sync helpers ───────────────────
+
+    def _sync_create_room(self, session: GameSession, host_actor: CurrentActor) -> None:
+        """Создаёт in-memory комнату при создании сессии."""
+        if self._room_manager is None:
+            return
+        room_id = str(session.id)
+        # Комната могла уже существовать (повторный вызов) — тогда пропускаем
+        if self._room_manager.get_room(room_id) is not None:
+            return
+        host_user_id = runtime_user_id_for_actor(host_actor)
+        if host_actor.is_guest:
+            participant = Participant.guest(host_actor.display_name)
+        else:
+            participant = Participant.authenticated(
+                host_actor.display_name, email=host_actor.email
+            )
+        from backend.websocket.models import Room
+        room = Room(
+            host_user_id=host_user_id,
+            participants={host_user_id: participant},
+        )
+        self._room_manager.rooms[room_id] = room
+
+    def _sync_join_room(self, session_id: int, actor: CurrentActor) -> None:
+        """Добавляет участника в in-memory комнату при join_session."""
+        if self._room_manager is None:
+            return
+        room_id = str(session_id)
+        room = self._room_manager.get_room(room_id)
+        if room is None:
+            return
+        user_id = runtime_user_id_for_actor(actor)
+        if user_id in room.participants:
+            return
+        if actor.is_guest:
+            participant = Participant.guest(actor.display_name)
+        else:
+            participant = Participant.authenticated(
+                actor.display_name, email=actor.email
+            )
+        room.add_participant(user_id, participant)
+
+    def _sync_start_game(self, session_id: int) -> None:
+        """Переводит in-memory комнату в статус PLAYING."""
+        if self._room_manager is None:
+            return
+        self._room_manager.start_game(str(session_id))
+
+    # ─────────────────── Public API ───────────────────────────────────
 
     def create_session(self, host_actor: CurrentActor) -> GameSession:
-        return create_game_session(self.db, host_actor=host_actor)
+        session = create_game_session(self.db, host_actor=host_actor)
+        self._sync_create_room(session, host_actor)
+        return session
 
     def get_session(self, session_id: int) -> GameSession:
         game_session = get_game_session_by_id(self.db, session_id)
@@ -80,10 +136,13 @@ class GameSessionService:
             raise AlreadyParticipantError("Вы уже являетесь участником этой сессии")
 
         try:
-            return add_participant(self.db, session_id, actor)
+            db_participant = add_participant(self.db, session_id, actor)
         except IntegrityError as exc:
             self.db.rollback()
             raise AlreadyParticipantError("Вы уже являетесь участником этой сессии") from exc
+
+        self._sync_join_room(session_id, actor)
+        return db_participant
 
     def leave_session(self, session_id: int, actor: CurrentActor) -> None:
         removed = remove_participant(self.db, session_id, actor)
@@ -93,6 +152,21 @@ class GameSessionService:
     def list_participants(self, session_id: int) -> list[SessionParticipant]:
         self.get_session(session_id)
         return get_participants_by_session(self.db, session_id)
+
+    def start_game(self, session_id: int, actor: CurrentActor) -> GameSession:
+        """
+        Переводит сессию в статус PLAYING (этап игры).
+        Только хост может инициировать старт игры.
+        """
+        game_session = self.get_session(session_id)
+        participant = self.require_participant(session_id, actor)
+        if not participant.is_host:
+            raise AccessDeniedError("Только хост может начать игру")
+        if game_session.status != SessionStatus.CREATED:
+            raise InvalidOperationError("Игру можно начать только из статуса CREATED")
+        result = update_session_status(self.db, game_session, SessionStatus.PLAYING)
+        self._sync_start_game(session_id)
+        return result
 
     def propose_movie(self, session_id: int, movie_id: int, actor: CurrentActor) -> SessionMovie:
         self.get_session(session_id)
@@ -167,26 +241,23 @@ class GameSessionService:
             raise InvalidOperationError("Для старта необходимо минимум 2 участника")
 
         participants_without_selection = [
-            participant.id
-            for participant in participants
-            if participant.selected_session_movie_id is None
+            p.id for p in participants if p.selected_session_movie_id is None
         ]
         if participants_without_selection:
             raise InvalidOperationError(
                 "Перед стартом игры каждый участник должен выбрать фильм"
             )
 
-        for participant in participants:
-            selected_movie = get_session_movie_by_id(
-                self.db,
-                participant.selected_session_movie_id,
-            )
+        for p in participants:
+            selected_movie = get_session_movie_by_id(self.db, p.selected_session_movie_id)
             if selected_movie is None or selected_movie.session_id != game_session.id:
                 raise InvalidOperationError(
                     "Выбранный участником фильм должен принадлежать текущей сессии"
                 )
 
-        return update_session_status(self.db, game_session, SessionStatus.PLAYING)
+        result = update_session_status(self.db, game_session, SessionStatus.PLAYING)
+        self._sync_start_game(game_session.id)
+        return result
 
     def pick_winner(
         self,
@@ -226,7 +297,9 @@ class GameSessionService:
 
         selected_movie = get_session_movie_by_id(self.db, selected_session_movie_id)
         if selected_movie is None or selected_movie.session_id != session_id:
-            raise InvalidOperationError("Выбранный победителем фильм не принадлежит этой сессии")
+            raise InvalidOperationError(
+                "Выбранный победителем фильм не принадлежит этой сессии"
+            )
 
         return set_winner(self.db, game_session, selected_session_movie_id)
 

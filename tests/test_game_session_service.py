@@ -16,6 +16,12 @@ from backend.services.game_session_service import GameSessionService
 
 
 class DummyDB:
+    def commit(self) -> None:
+        return None
+
+    def refresh(self, obj) -> None:
+        return None
+
     def rollback(self) -> None:
         return None
 
@@ -393,3 +399,31 @@ def test_propose_movie_from_kinopoisk_handles_duplicate_movie(
     asyncio.run(_run())
 
     assert db.rollback_called is True
+
+
+def test_start_game_only_host(monkeypatch):
+    service = GameSessionService(DummyDB())
+    # Мокаем get_session и require_participant
+    service.get_session = lambda sid: SimpleNamespace(id=sid, status=SessionStatus.CREATED)
+    class DummyHost:
+        is_host = True
+    class DummyNotHost:
+        is_host = False
+    service.require_participant = lambda sid, actor: DummyHost()
+    # Должно работать для хоста
+    session = service.start_game(1, _user_actor(1))
+    assert session.status == SessionStatus.PLAYING
+    # Должно падать для не-хоста
+    service.require_participant = lambda sid, actor: DummyNotHost()
+    with pytest.raises(Exception):
+        service.start_game(1, _user_actor(2))
+
+
+def test_start_game_wrong_status(monkeypatch):
+    service = GameSessionService(DummyDB())
+    service.get_session = lambda sid: SimpleNamespace(id=sid, status=SessionStatus.FINISHED)
+    class DummyHost:
+        is_host = True
+    service.require_participant = lambda sid, actor: DummyHost()
+    with pytest.raises(Exception):
+        service.start_game(1, _user_actor(1))
