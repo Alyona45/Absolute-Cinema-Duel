@@ -3,9 +3,10 @@ import logging
 import secrets
 import string
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from backend.actors import CurrentActor
 from backend.models import GameSession, SessionParticipant, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ def _commit(db: Session, action: str) -> None:
         raise
 
 
-def create_game_session(db: Session, host_user_id: int) -> GameSession:
+def create_game_session(db: Session, host_actor: CurrentActor) -> GameSession:
     """
     Создаёт новую игровую сессию.
     Статус по умолчанию — CREATED, время старта проставляется автоматически.
@@ -31,14 +32,45 @@ def create_game_session(db: Session, host_user_id: int) -> GameSession:
     """
     for _ in range(MAX_INVITE_CODE_ATTEMPTS):
         invite_code = _generate_invite_code()
-        if get_game_session_by_invite_code(db, invite_code) is not None:
-            continue
 
-        session = GameSession(host_user_id=host_user_id, invite_code=invite_code)
+        session = GameSession(
+            host_user_id=host_actor.user_id,
+            invite_code=invite_code,
+        )
         db.add(session)
-        db.flush()
-        db.add(SessionParticipant(session_id=session.id, user_id=host_user_id))
-        _commit(db, "создании игровой сессии")
+
+        try:
+            db.flush()
+        except IntegrityError as exc:
+            db.rollback()
+            if _is_invite_code_conflict(exc):
+                continue
+            logger.exception("Ошибка БД при создании игровой сессии")
+            raise
+
+        db.add(
+            SessionParticipant(
+                session_id=session.id,
+                user_id=host_actor.user_id,
+                guest_id=host_actor.guest_id,
+                display_name=host_actor.display_name,
+                is_host=True,
+            )
+        )
+
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            if _is_invite_code_conflict(exc):
+                continue
+            logger.exception("Ошибка БД при создании игровой сессии")
+            raise
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception("Ошибка БД при создании игровой сессии")
+            raise
+
         db.refresh(session)
         return session
 
@@ -126,3 +158,8 @@ def set_winner(
 
 def _generate_invite_code() -> str:
     return "".join(secrets.choice(INVITE_CODE_ALPHABET) for _ in range(INVITE_CODE_LENGTH))
+
+
+def _is_invite_code_conflict(exc: IntegrityError) -> bool:
+    message = str(exc.orig).lower() if exc.orig is not None else str(exc).lower()
+    return "invite_code" in message and "unique" in message

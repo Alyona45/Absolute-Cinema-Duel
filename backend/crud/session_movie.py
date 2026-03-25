@@ -21,17 +21,16 @@ def add_movie_to_session(
     db: Session,
     session_id: int,
     movie_id: int,
-    proposed_by_user_id: int,
+    proposed_by_participant_id: int,
 ) -> SessionMovie:
     """
     Добавляет фильм в игровую сессию от имени участника.
-    Уникальность пары (session_id, movie_id) обеспечивается индексом —
-    один и тот же фильм нельзя предложить дважды в рамках одной сессии.
+    Один и тот же фильм может быть предложен в рамках одной сессии несколько раз.
     """
     session_movie = SessionMovie(
         session_id=session_id,
         movie_id=movie_id,
-        proposed_by_user_id=proposed_by_user_id,
+        proposed_by_participant_id=proposed_by_participant_id,
     )
     db.add(session_movie)
     _commit(db, "добавлении фильма в сессию")

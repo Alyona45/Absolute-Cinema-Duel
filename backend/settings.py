@@ -18,3 +18,6 @@ REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"
 
 # API ключ для kinopoisk.dev
 KINOPOISK_API_KEY: str = os.getenv("KINOPOISK_API_KEY", "")
+
+# Базовый URL standalone Curvytron сервера
+CURVYTRON_BASE_URL: str = os.getenv("CURVYTRON_BASE_URL", "http://localhost:8080")
