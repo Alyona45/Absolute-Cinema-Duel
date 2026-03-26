@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MovieCO Турнир</title>
+  <style>
+    :root {
+      --bg: #fdf6ec;
+      --fg: #222;
+      --muted: #666;
+      --line: #ddd;
+      --accent: #db5a24;
+      --accent-soft: #f5b89f;
+      --ok: #2e7d32;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #fff 0%, var(--bg) 100%);
+      color: var(--fg);
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      min-height: 100vh;
+    }
+    .wrap { width: min(1080px, 94vw); margin: 1rem auto 2rem; }
+    .top {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: .8rem;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .meta { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: .35rem .7rem;
+      font-size: .88rem;
+      background: #fff;
+    }
+    .bar {
+      width: 100%;
+      height: 12px;
+      border-radius: 999px;
+      background: #f0e6db;
+      overflow: hidden;
+      border: 1px solid #ead6c2;
+    }
+    .bar > i {
+      display: block;
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-soft), var(--accent));
+      transition: width 350ms ease;
+    }
+    .board {
+      display: grid;
+      grid-template-columns: 1fr 100px 1fr;
+      gap: 1rem;
+      align-items: center;
+      margin-top: 1.25rem;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 10px 20px rgba(0,0,0,.08);
+      overflow: hidden;
+      animation: reveal .3s ease;
+    }
+    .poster {
+      width: 100%;
+      aspect-ratio: 2/3;
+      background: #eee;
+      object-fit: cover;
+      display: block;
+    }
+    .info { padding: .8rem .9rem 1rem; }
+    .title { font-size: 1.04rem; font-weight: 700; margin-bottom: .4rem; }
+    .sub { color: var(--muted); font-size: .9rem; margin-bottom: .7rem; }
+    button.vote {
+      width: 100%;
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      padding: .65rem .8rem;
+      border-radius: 10px;
+      font-size: .95rem;
+      cursor: pointer;
+      transition: transform .14s ease, opacity .2s ease;
+    }
+    button.vote:hover { transform: translateY(-2px); }
+    button.vote:disabled { opacity: .55; cursor: default; transform: none; }
+    .vs {
+      text-align: center;
+      font-size: 1.35rem;
+      letter-spacing: .08em;
+      color: #a05531;
+      font-weight: 800;
+    }
+    .panel {
+      margin-top: 1.2rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .8rem;
+    }
+    .box {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: .8rem;
+      min-height: 120px;
+    }
+    .input-row { display: flex; gap: .5rem; margin-top: .5rem; }
+    input, select {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: .55rem .6rem;
+      width: 100%;
+      background: #fff;
+    }
+    .btn {
+      border: 0;
+      border-radius: 8px;
+      padding: .55rem .8rem;
+      cursor: pointer;
+      background: #176b87;
+      color: #fff;
+      font-weight: 600;
+    }
+    .btn.alt { background: #2e7d32; }
+    .btn.warn { background: #9a3412; }
+    .btn.ghost {
+      background: #fff;
+      color: #333;
+      border: 1px solid #ccc;
+    }
+    .status {
+      margin-top: .7rem;
+      min-height: 1.2rem;
+      color: #9a3412;
+      font-size: .9rem;
+    }
+    .winner {
+      margin-top: 1.2rem;
+      border: 2px solid #f0cf7d;
+      background: #fff9e8;
+      border-radius: 16px;
+      padding: 1rem;
+      display: none;
+      animation: reveal .4s ease;
+    }
+    .winner.show { display: block; }
+    .share { background: #111; color: #fff; }
+    @keyframes reveal {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (max-width: 900px) {
+      .board { grid-template-columns: 1fr; }
+      .vs { order: -1; }
+      .panel { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="meta">
+        <span class="pill" id="roomCode">Комната: -</span>
+        <span class="pill" id="roundName">Раунд: -</span>
+        <span class="pill" id="players">Игроков: 0</span>
+      </div>
+      <button class="btn alt" id="startBtn">Начать</button>
+    </div>
+
+    <div class="bar"><i id="progress"></i></div>
+
+    <div class="panel">
+      <div class="box">
+        <strong>Создать комнату</strong>
+        <div class="input-row">
+          <input id="createTitle" placeholder="Название комнаты" value="MovieCO Лобби" />
+          <input id="createName" placeholder="Ваше имя" value="Хост" />
+        </div>
+        <div class="input-row">
+          <select id="createSize">
+            <option value="8" selected>8</option>
+            <option value="16">16</option>
+          </select>
+          <button class="btn" id="createBtn">Создать</button>
+        </div>
+      </div>
+      <div class="box">
+        <strong>Присоединиться к комнате</strong>
+        <div class="input-row">
+          <input id="joinRoomId" placeholder="ID комнаты" />
+          <input id="joinName" placeholder="Ваше имя" value="Игрок" />
+        </div>
+        <div class="input-row">
+          <button class="btn" id="joinBtn">Присоединиться</button>
+          <button class="btn ghost" id="loadRoomsBtn">Лобби</button>
+        </div>
+        <div class="input-row">
+          <select id="roomsSelect"></select>
+          <button class="btn" id="joinSelectedBtn">Присоединиться</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="box">
+        <strong>Кеш фильмов</strong>
+        <div class="input-row">
+          <button class="btn warn" id="seedBtn">Загрузить 16 демо-фильмов</button>
+        </div>
+        <div class="status" id="statusText"></div>
+      </div>
+      <div class="box">
+        <strong>Как быстро присоединиться</strong>
+        <div class="sub">1) Хост создает комнату</div>
+        <div class="sub">2) Поделись ID комнаты</div>
+        <div class="sub">3) Другие игроки вводят ID и нажимают Присоединиться</div>
+      </div>
+    </div>
+
+    <section class="board" id="board" style="display:none;">
+      <article class="card" id="leftCard">
+        <img class="poster" id="leftPoster" alt="left" />
+        <div class="info">
+          <div class="title" id="leftTitle"></div>
+          <div class="sub" id="leftSub"></div>
+          <button class="vote" id="voteLeft">Голосовать</button>
+        </div>
+      </article>
+      <div class="vs">VS</div>
+      <article class="card" id="rightCard">
+        <img class="poster" id="rightPoster" alt="right" />
+        <div class="info">
+          <div class="title" id="rightTitle"></div>
+          <div class="sub" id="rightSub"></div>
+          <button class="vote" id="voteRight">Голосовать</button>
+        </div>
+      </article>
+    </section>
+
+    <section class="winner" id="winnerBox">
+      <h2>Победитель</h2>
+      <p id="winnerText"></p>
+      <button class="btn share" id="shareBtn">Поделиться</button>
+    </section>
+  </div>
+
+  <script>
+    const state = {
+      roomId: null,
+      userKey: null,
+      room: null,
+      ws: null,
+      currentMatchKey: null,
+      votedMatchKey: null,
+      votedMatchKeyPending: null,
+      reconnectTimer: null,
+      pingTimer: null,
+      reconnectAttempts: 0,
+      expectedClose: false,
+      wsToken: 0
+    };
+
+    const el = {
+      roomCode: document.getElementById('roomCode'),
+      roundName: document.getElementById('roundName'),
+      players: document.getElementById('players'),
+      progress: document.getElementById('progress'),
+      board: document.getElementById('board'),
+      leftPoster: document.getElementById('leftPoster'),
+      rightPoster: document.getElementById('rightPoster'),
+      leftTitle: document.getElementById('leftTitle'),
+      rightTitle: document.getElementById('rightTitle'),
+      leftSub: document.getElementById('leftSub'),
+      rightSub: document.getElementById('rightSub'),
+      voteLeft: document.getElementById('voteLeft'),
+      voteRight: document.getElementById('voteRight'),
+      winnerBox: document.getElementById('winnerBox'),
+      winnerText: document.getElementById('winnerText'),
+      createBtn: document.getElementById('createBtn'),
+      joinBtn: document.getElementById('joinBtn'),
+      startBtn: document.getElementById('startBtn'),
+      statusText: document.getElementById('statusText'),
+      roomsSelect: document.getElementById('roomsSelect')
+    };
+
+    // Определяем API URL динамически
+    const getApiBaseUrl = () => {
+      const hostname = window.location.hostname;
+      const port = window.location.port;
+      
+      // Локально: если фронт на 8001, API на 8010
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return `http://${hostname}:8010`;
+      }
+      
+      // На хостинге: используем тот же хост, что и браузер
+      // (предполагается reverse proxy, который маршрутизирует /tournaments/* на tournaments API)
+      return `${window.location.protocol}//${window.location.host}`;
+    };
+
+    const apiBaseUrl = getApiBaseUrl();
+
+    const api = {
+      createRoom: (body) => fetch(`${apiBaseUrl}/tournaments/rooms`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+      }).then(readJsonOrError),
+      getRoom: (roomId) => fetch(`${apiBaseUrl}/tournaments/rooms/${roomId}`).then(readJsonOrError),
+      listRooms: () => fetch(`${apiBaseUrl}/tournaments/rooms?status=LOBBY&limit=20`).then(readJsonOrError),
+      joinRoom: (roomId, body) => fetch(`${apiBaseUrl}/tournaments/rooms/${roomId}/join`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+      }).then(readJsonOrError),
+      startRoom: (roomId, userKey) => fetch(`${apiBaseUrl}/tournaments/rooms/${roomId}/start?user_key=${encodeURIComponent(userKey)}`, {
+        method: 'POST'
+      }).then(readJsonOrError),
+      seedMovies: (count) => fetch(`${apiBaseUrl}/tournaments/catalog/seed-demo?count=${encodeURIComponent(count)}`, {
+        method: 'POST'
+      }).then(readJsonOrError)
+    };
+
+    async function readJsonOrError(response) {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = data.detail || `HTTP ${response.status}`;
+        throw new Error(detail);
+      }
+      return data;
+    }
+
+    function wsUrl(roomId, userKey) {
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      return `${protocol}://${location.host}/tournaments/ws/${roomId}?user_key=${encodeURIComponent(userKey)}`;
+    }
+
+    function getSavedUserKeys() {
+      try {
+        const raw = localStorage.getItem('movieco_user_keys');
+        const parsed = raw ? JSON.parse(raw) : {};
+        return (parsed && typeof parsed === 'object') ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function saveUserKey(roomId, userKey) {
+      const keys = getSavedUserKeys();
+      keys[String(roomId)] = userKey;
+      localStorage.setItem('movieco_user_keys', JSON.stringify(keys));
+    }
+
+    function getSavedUserKey(roomId) {
+      const keys = getSavedUserKeys();
+      return keys[String(roomId)] || null;
+    }
+
+    function clearSavedUserKey(roomId) {
+      const keys = getSavedUserKeys();
+      delete keys[String(roomId)];
+      localStorage.setItem('movieco_user_keys', JSON.stringify(keys));
+    }
+
+    function stopPing() {
+      if (state.pingTimer) {
+        clearInterval(state.pingTimer);
+        state.pingTimer = null;
+      }
+    }
+
+    function startPing() {
+      stopPing();
+      state.pingTimer = setInterval(() => {
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+        state.ws.send(JSON.stringify({ type: 'ping' }));
+      }, 15000);
+    }
+
+    function scheduleReconnect() {
+      if (!state.roomId || !state.userKey) return;
+      if (state.reconnectTimer) return;
+      const delay = Math.min(1000 * (2 ** state.reconnectAttempts), 10000);
+      state.reconnectAttempts += 1;
+      setStatus(`Соединение потеряно. Переподключение через ${Math.round(delay / 1000)}с...`, true);
+      state.reconnectTimer = setTimeout(() => {
+        state.reconnectTimer = null;
+        connectWs();
+      }, delay);
+    }
+
+    function connectWs() {
+      if (!state.roomId || !state.userKey) return;
+      if (state.reconnectTimer) {
+        clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = null;
+      }
+      stopPing();
+
+      if (state.ws) {
+        try {
+          state.expectedClose = true;
+          state.ws.onopen = null;
+          state.ws.onmessage = null;
+          state.ws.onerror = null;
+          state.ws.onclose = null;
+          state.ws.close();
+        } catch {}
+      }
+
+      state.expectedClose = false;
+      const token = ++state.wsToken;
+      const ws = new WebSocket(wsUrl(state.roomId, state.userKey));
+      state.ws = ws;
+
+      ws.onopen = () => {
+        if (token !== state.wsToken) return;
+        state.reconnectAttempts = 0;
+        console.log('[ws.onopen] Подключено', state.roomId);
+        setStatus('Подключено к обновлениям');
+        startPing();
+      };
+
+      ws.onmessage = (event) => {
+        if (token !== state.wsToken) return;
+        const msg = JSON.parse(event.data);
+        console.log('[ws.onmessage]', msg.type, msg);
+        if (msg.type === 'room_state') {
+          console.log('[room_state] Status:', msg.payload?.status);
+          updateRoom(msg.payload);
+          return;
+        }
+        if (msg.type === 'pong') {
+          return;
+        }
+        if (msg.type === 'vote_accepted') {
+          console.log('[vote_accepted] Recorded vote for match:', state.votedMatchKeyPending);
+          state.votedMatchKey = state.votedMatchKeyPending;
+          state.votedMatchKeyPending = null;
+          el.voteLeft.disabled = true;
+          el.voteRight.disabled = true;
+          setStatus('Голос принят. Ожидание других игроков...');
+          return;
+        }
+        if (msg.type === 'error') {
+          const detail = (msg.payload && msg.payload.detail) ? msg.payload.detail : 'Неизвестная ошибка websocket';
+          console.error('[ws.error]', detail);
+          setStatus(detail, true);
+          if (!(state.currentMatchKey && state.votedMatchKey === state.currentMatchKey)) {
+            el.voteLeft.disabled = false;
+            el.voteRight.disabled = false;
+          }
+        }
+      };
+
+      ws.onerror = () => {
+        if (token !== state.wsToken) return;
+        stopPing();
+        if (!state.expectedClose) {
+          scheduleReconnect();
+        }
+      };
+
+      ws.onclose = (event) => {
+        if (token !== state.wsToken) return;
+        stopPing();
+        if (state.expectedClose) {
+          return;
+        }
+
+        // Коды закрытия websocket не должны запускать бесконечные циклы переподключения.
+        if (event.code === 4001) {
+          setStatus('Ошибка аутентификации WebSocket: отсутствует ключ пользователя. Присоединитесь снова.', true);
+          return;
+        }
+        if (event.code === 4003) {
+          clearSavedUserKey(state.roomId);
+          setStatus('Ключ участника недействителен для этой комнаты. Присоединитесь снова.', true);
+          return;
+        }
+        if (event.code === 4004) {
+          clearSavedUserKey(state.roomId);
+          setStatus('Комната не найдена. Создайте новую комнату или присоединитесь к существующему лобби.', true);
+          return;
+        }
+
+        if (!state.expectedClose) {
+          scheduleReconnect();
+        }
+      };
+    }
+
+    function renderMatch(match, canVote) {
+      if (!match) {
+        el.board.style.display = 'none';
+        state.currentMatchKey = null;
+        return;
+      }
+      el.board.style.display = 'grid';
+      const matchKey = `${match.round_no}:${match.match_no}`;
+      console.log('[renderMatch] Match:', matchKey, 'canVote:', canVote, 'voted:', state.votedMatchKey);
+      const alreadyVoted = state.votedMatchKey === matchKey;
+      state.currentMatchKey = matchKey;
+      const left = match.left;
+      const right = match.right;
+      el.leftPoster.src = left.poster_url || '';
+      el.rightPoster.src = right.poster_url || '';
+      el.leftTitle.textContent = left.title;
+      el.rightTitle.textContent = right.title;
+      el.leftSub.textContent = `${left.year || '-'} • KP ${left.rating || '-'}`;
+      el.rightSub.textContent = `${right.year || '-'} • KP ${right.rating || '-'}`;
+
+      el.voteLeft.onclick = () => {
+        console.log('[vote.click] Left button clicked, movie_id=', left.movie_id);
+        sendVote(left.movie_id);
+      };
+      el.voteRight.onclick = () => {
+        console.log('[vote.click] Right button clicked, movie_id=', right.movie_id);
+        sendVote(right.movie_id);
+      };
+      const disableVoting = !canVote || alreadyVoted;
+      el.voteLeft.disabled = disableVoting;
+      el.voteRight.disabled = disableVoting;
+
+      console.log('[renderMatch] Buttons disabled:', disableVoting, 'canVote:', canVote, 'alreadyVoted:', alreadyVoted);
+
+      if (canVote && alreadyVoted) {
+        setStatus('Голос принят. Ожидание других игроков...');
+      } else if (canVote && !alreadyVoted) {
+        setStatus('Выберите ваш любимый фильм');
+      }
+    }
+
+    function updateRoom(room) {
+      state.room = room;
+      state.roomId = room.room_id;
+      localStorage.setItem('movieco_room_id', String(room.room_id));
+
+      const me = room.participants.find((p) => p.user_key === state.userKey);
+      const isHost = !!(me && me.is_host);
+      const canStart = room.status === 'LOBBY' && isHost;
+      el.startBtn.disabled = !canStart;
+
+      el.roomCode.textContent = `Комната: ${room.room_id}`;
+      el.roundName.textContent = `Раунд: ${room.round_name}`;
+      el.players.textContent = `Игроков: ${room.participants.length}`;
+      el.progress.style.width = `${Math.round((room.progress || 0) * 100)}%`;
+
+      console.log('[updateRoom] Status:', room.status, 'Winner:', room.winner, 'Match:', room.current_match?.round_no, 'currentMatchKey:', state.currentMatchKey, 'votedMatchKey:', state.votedMatchKey);
+
+      if (room.winner) {
+        el.winnerBox.classList.add('show');
+        el.winnerText.textContent = `${room.winner.title} (${room.winner.year || '-'})`;
+        el.board.style.display = 'none';
+        state.currentMatchKey = null;
+      } else {
+        el.winnerBox.classList.remove('show');
+        const isRunning = room.status === 'RUNNING';
+        
+        // Compute new match key
+        const newMatchKey = room.current_match ? `${room.current_match.round_no}:${room.current_match.match_no}` : null;
+        
+        // If match changed, reset vote tracking for new match
+        if (newMatchKey && newMatchKey !== state.currentMatchKey) {
+          console.log('[updateRoom] Match changed from', state.currentMatchKey, 'to', newMatchKey, '- resetting votedMatchKey from', state.votedMatchKey, 'to null');
+          state.votedMatchKey = null;
+          state.votedMatchKeyPending = null;
+        }
+        
+        console.log('[updateRoom] About to render match, isRunning:', isRunning, 'current_match:', room.current_match?.round_no + '-' + room.current_match?.match_no, 'new votedMatchKey:', state.votedMatchKey);
+        renderMatch(room.current_match, isRunning);
+        if (!isRunning) {
+          if (isHost) {
+            setStatus('Турнир ещё не начался. Нажмите Начать.', true);
+          } else {
+            setStatus('Турнир ещё не начался. Ожидание хоста...', true);
+          }
+        }
+      }
+    }
+
+    function setStatus(text, isError = false) {
+      el.statusText.style.color = isError ? '#9a3412' : '#2e7d32';
+      el.statusText.textContent = text;
+    }
+
+    function sendVote(movieId) {
+      if (!state.ws) {
+        setStatus(`Нет соединения WebSocket. Обновите страницу.`, true);
+        return;
+      }
+      if (state.ws.readyState !== WebSocket.OPEN) {
+        setStatus(`WebSocket не готов (state: ${state.ws.readyState}). Попытайтесь через мгновение.`, true);
+        return;
+      }
+      if (!state.room) {
+        setStatus('Комната ещё не загружена. Подождите.', true);
+        return;
+      }
+      if (state.room.status !== 'RUNNING') {
+        setStatus(`Статус турнира: ${state.room.status}. Нажмите Начать.`, true);
+        return;
+      }
+      if (state.currentMatchKey && state.votedMatchKey === state.currentMatchKey) {
+        setStatus('Вы уже голосовали в этом матче. Ожидание других игроков...');
+        return;
+      }
+      el.voteLeft.disabled = true;
+      el.voteRight.disabled = true;
+      setStatus('Отправка голоса...');
+      console.log('[sendVote] Отправка:', { type: 'vote', movie_id: movieId });
+      state.votedMatchKeyPending = state.currentMatchKey;
+      state.ws.send(JSON.stringify({ type: 'vote', movie_id: movieId }));
+    }
+
+    el.createBtn.onclick = async () => {
+      try {
+        // Ensure demo movies are loaded first
+        await api.seedMovies(16);
+        
+        const payload = {
+          title: document.getElementById('createTitle').value,
+          display_name: document.getElementById('createName').value,
+          bracket_size: Number(document.getElementById('createSize').value)
+        };
+        const data = await api.createRoom(payload);
+        state.roomId = data.room_id;
+        state.userKey = data.user_key;
+        saveUserKey(state.roomId, state.userKey);
+        document.getElementById('joinRoomId').value = String(data.room_id);
+        updateRoom(data.room);
+        connectWs();
+        setStatus(`Комната создана: ${data.room_id}`);
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    };
+
+    el.joinBtn.onclick = async () => {
+      try {
+        const roomIdValue = document.getElementById('joinRoomId').value.trim();
+        const roomId = Number(roomIdValue);
+        if (!roomId || Number.isNaN(roomId)) {
+          throw new Error('Введите валидный ID комнаты');
+        }
+        const payload = { display_name: document.getElementById('joinName').value };
+        const data = await api.joinRoom(roomId, payload);
+        state.roomId = data.room_id;
+        state.userKey = data.user_key;
+        saveUserKey(state.roomId, state.userKey);
+        updateRoom(data.room);
+        connectWs();
+        setStatus(`Присоединены к комнате ${data.room_id}`);
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    };
+
+    async function loadLobbies() {
+      try {
+        const rooms = await api.listRooms();
+        el.roomsSelect.innerHTML = '';
+        if (!rooms.length) {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = 'Нет открытых лобби';
+          el.roomsSelect.appendChild(opt);
+          setStatus('Нет открытых лобби');
+          return;
+        }
+        for (const room of rooms) {
+          const opt = document.createElement('option');
+          opt.value = String(room.room_id);
+          opt.textContent = `#${room.room_id} ${room.title} (${room.participants} игроков)`;
+          el.roomsSelect.appendChild(opt);
+        }
+        document.getElementById('joinRoomId').value = el.roomsSelect.value;
+        setStatus(`Загружено ${rooms.length} лобби`);
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    }
+
+    document.getElementById('loadRoomsBtn').onclick = loadLobbies;
+    document.getElementById('joinSelectedBtn').onclick = () => {
+      const selected = el.roomsSelect.value;
+      if (selected) {
+        document.getElementById('joinRoomId').value = selected;
+        el.joinBtn.click();
+      }
+    };
+
+    el.startBtn.onclick = async () => {
+      if (!state.roomId || !state.userKey) return;
+      if (!state.room) {
+        setStatus('Стандартные данные комнаты не загружены.', true);
+        return;
+      }
+      const me = state.room.participants.find((p) => p.user_key === state.userKey);
+      if (!me || !me.is_host) {
+        setStatus('Только хост может начать турнир.', true);
+        return;
+      }
+      try {
+        const data = await api.startRoom(state.roomId, state.userKey);
+        updateRoom(data);
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    };
+
+    document.getElementById('seedBtn').onclick = async () => {
+      try {
+        const data = await api.seedMovies(16);
+        setStatus(`Фильмы в кеше: ${data.total} (создано ${data.created})`);
+        // Update lobbies after seeding
+        await loadLobbies();
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    };
+
+    document.getElementById('shareBtn').onclick = async () => {
+      const text = `Турнир окончен ${state.roomId}`;
+      if (navigator.share) {
+        await navigator.share({ title: 'MovieCO', text, url: location.href });
+      } else {
+        await navigator.clipboard.writeText(text + ' ' + location.href);
+        alert('Копировано в буфер обмена');
+      }
+    };
+
+    (async function bootstrap() {
+      const params = new URLSearchParams(location.search);
+      const fromQuery = params.get('room_id');
+      const fromStorage = localStorage.getItem('movieco_room_id');
+      const value = fromQuery || fromStorage;
+      if (value) {
+        document.getElementById('joinRoomId').value = value;
+        const roomId = Number(value);
+        const savedKey = Number.isNaN(roomId) ? null : getSavedUserKey(roomId);
+        if (savedKey) {
+          try {
+            state.roomId = roomId;
+            state.userKey = savedKey;
+            const room = await api.getRoom(roomId);
+            updateRoom(room);
+            connectWs();
+            setStatus(`Восстановлена сессия участника для комнаты ${roomId}`);
+          } catch {
+            setStatus('Не удалось восстановить сессию участника.', true);
+          }
+        }
+      }
+      // Ensure demo movies are seeded on page load
+      try {
+        await api.seedMovies(16);
+      } catch (e) {
+        console.error('Failed to seed movies:', e);
+      }
+      loadLobbies();
+    })();
+  </script>
+</body>
+</html>

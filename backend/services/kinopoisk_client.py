@@ -8,7 +8,9 @@ logger = logging.getLogger(__name__)
 
 
 class KinopoiskClient:
-    BASE_URL = "https://api.kinopoisk.dev/v1.4"
+    # This host is where kinopoisk.dev redirects API traffic.
+    BASE_URL = "https://api.poiskkino.dev/v1.4"
+    # BASE_URL = "https://api.kinopoisk.dev/v1.4"
 
     def __init__(self, api_key: str | None = None, timeout: float = 10.0) -> None:
         self.api_key = api_key or KINOPOISK_API_KEY
@@ -51,6 +53,108 @@ class KinopoiskClient:
             raise ValueError("Kinopoisk response payload must be a JSON object")
 
         return payload
+
+    async def search_popular_russian_movies(self, limit: int = 20) -> list[dict]:
+        """Search for popular Russian movies by predefined queries."""
+        if not self.api_key:
+            raise ValueError("KINOPOISK_API_KEY is not configured")
+
+        # Popular Russian movie titles and search terms
+        search_queries = [
+            "Тот самый Мюнхгаузен",
+            "Красивая жизнь",
+            "Плывущие облака",
+            "Боец",
+            "Легенда № 17",
+            "О чём говорят мужчины",
+            "Сулусулу",
+            "Мастер и Маргарита",
+            "Война и мир",
+            "Броненосец Потёмкин",
+        ]
+
+        collected = {}
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            follow_redirects=True,
+        ) as client:
+            for query in search_queries:
+                if len(collected) >= limit:
+                    break
+
+                try:
+                    response = await client.get(
+                        f"{self.BASE_URL}/movie/search",
+                        params={"query": query, "page": 1, "limit": 5},
+                        headers={"X-API-KEY": self.api_key},
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    docs = self._extract_docs(payload)
+
+                    for doc in docs:
+                        if len(collected) >= limit:
+                            break
+                        if isinstance(doc, dict) and "id" in doc:
+                            kp_id = doc["id"]
+                            if kp_id not in collected:
+                                collected[kp_id] = doc
+                except Exception as e:
+                    logger.warning(f"Failed to search for '{query}': {e}")
+                    continue
+
+        return list(collected.values())[:limit]
+
+    def search_popular_russian_movies_sync(self, limit: int = 20) -> list[dict]:
+        """Synchronous search for popular Russian movies."""
+        if not self.api_key:
+            raise ValueError("KINOPOISK_API_KEY is not configured")
+
+        # Popular Russian movie titles and search terms
+        search_queries = [
+            "Тот самый Мюнхгаузен",
+            "Красивая жизнь",
+            "Плывущие облака",
+            "Боец",
+            "Легенда № 17",
+            "О чём говорят мужчины",
+            "Сулусулу",
+            "Мастер и Маргарита",
+            "Война и мир",
+            "Броненосец Потёмкин",
+        ]
+
+        collected = {}
+        with httpx.Client(
+            timeout=self.timeout,
+            follow_redirects=True,
+        ) as client:
+            for query in search_queries:
+                if len(collected) >= limit:
+                    break
+
+                try:
+                    response = client.get(
+                        f"{self.BASE_URL}/movie/search",
+                        params={"query": query, "page": 1, "limit": 5},
+                        headers={"X-API-KEY": self.api_key},
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    docs = self._extract_docs(payload)
+
+                    for doc in docs:
+                        if len(collected) >= limit:
+                            break
+                        if isinstance(doc, dict) and "id" in doc:
+                            kp_id = doc["id"]
+                            if kp_id not in collected:
+                                collected[kp_id] = doc
+                except Exception as e:
+                    logger.warning(f"Failed to search for '{query}': {e}")
+                    continue
+
+        return list(collected.values())[:limit]
 
     def _extract_docs(self, payload: object) -> list[dict]:
         if not isinstance(payload, dict):

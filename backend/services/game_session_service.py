@@ -236,25 +236,6 @@ class GameSessionService:
         if participant.id != host_participant.id:
             raise AccessDeniedError("Только хост может запустить игровую сессию")
 
-        participants = get_participants_by_session(self.db, game_session.id)
-        if len(participants) < 2:
-            raise InvalidOperationError("Для старта необходимо минимум 2 участника")
-
-        participants_without_selection = [
-            p.id for p in participants if p.selected_session_movie_id is None
-        ]
-        if participants_without_selection:
-            raise InvalidOperationError(
-                "Перед стартом игры каждый участник должен выбрать фильм"
-            )
-
-        for p in participants:
-            selected_movie = get_session_movie_by_id(self.db, p.selected_session_movie_id)
-            if selected_movie is None or selected_movie.session_id != game_session.id:
-                raise InvalidOperationError(
-                    "Выбранный участником фильм должен принадлежать текущей сессии"
-                )
-
         result = update_session_status(self.db, game_session, SessionStatus.PLAYING)
         self._sync_start_game(game_session.id)
         return result

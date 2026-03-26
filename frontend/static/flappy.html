@@ -31,7 +31,7 @@
 <div class="panel">
   <b>Шаг 1. Создать сессию (хост)</b>
   <div class="row" style="margin-top:8px">
-    <div><label>Сервер</label><input id="serverUrl" value="http://localhost:8000" style="width:220px"></div>
+    <div><label>Сервер</label><input id="serverUrl" style="width:220px"></div>
     <button id="btnCreate">POST /sessions/</button>
   </div>
   <div class="row">
@@ -65,9 +65,22 @@
   <input id="myPlayerId" style="background:#111;border:1px solid #333;color:#999;padding:2px 6px;width:260px" placeholder="заполнится автоматически">
 </div>
 
+<div style="font-size:11px;color:#555;margin-bottom:6px">
+  Invite код для WebSocket:
+  <input id="inviteCodeWs" style="background:#111;border:1px solid #333;color:#999;padding:2px 6px;width:260px" placeholder="скопируется автоматически">
+</div>
+
 <canvas id="canvas" width="800" height="400"></canvas>
 
 <script>
+  // Initialize server URL to current host
+  window.addEventListener('DOMContentLoaded', () => {
+    const serverUrlInput = document.getElementById('serverUrl');
+    if (!serverUrlInput.value) {
+      serverUrlInput.value = window.location.origin;
+    }
+  });
+
   function log(msg, cls='inf') {
     const el = document.getElementById('log');
     const d = document.createElement('div');
@@ -94,50 +107,55 @@
   // Шаг 1
   document.getElementById('btnCreate').addEventListener('click', async () => {
     try {
-      const d = await api('/sessions/', { method: 'POST' });
-      document.getElementById('sessionId').value  = d.id;
-      document.getElementById('inviteCode').value = d.invite_code;
-      log('Сессия создана id=' + d.id + ' invite=' + d.invite_code, 'ok');
-      // Получаем участников чтобы узнать свой player_id
-      await loadMyPlayerId(d.id);
+      const d = await api('/rooms', { method: 'POST', body: JSON.stringify({}) });
+      document.getElementById('sessionId').value  = d.room_id;
+      document.getElementById('inviteCode').value = d.room_id;
+      document.getElementById('inviteCodeWs').value = d.room_id;
+      log('Комната создана room_id=' + d.room_id, 'ok');
+      // Получаем информацию о комнате
+      const room = await api('/rooms/' + d.room_id);
+      log('Участников: ' + Object.keys(room.participants || {}).length, 'inf');
+      document.getElementById('myPlayerId').value = d.user_id;
     } catch(e) { log('Ошибка: ' + e.message, 'err'); }
   });
 
   // Шаг 2
   document.getElementById('btnJoin').addEventListener('click', async () => {
     const code = document.getElementById('joinCode').value.trim();
-    if (!code) { log('Введи invite-код', 'err'); return; }
+    if (!code) { log('Введи room_id/invite-код', 'err'); return; }
     try {
-      const d = await api('/sessions/join-by-code', {
+      const d = await api('/rooms/' + code + '/join', {
         method: 'POST',
-        body: JSON.stringify({ invite_code: code }),
+        body: JSON.stringify({}),
       });
-      document.getElementById('sessionId').value = d.session_id;
-      log('Присоединился к сессии ' + d.session_id, 'ok');
-      await loadMyPlayerId(d.session_id);
+      document.getElementById('sessionId').value = code;
+      document.getElementById('inviteCodeWs').value = code;
+      log('Присоединился к комнате ' + code, 'ok');
+      document.getElementById('myPlayerId').value = d.user_id;
+      
+      // Получаем информацию о комнате
+      const room = await api('/rooms/' + code);
+      log('Участников в комнате: ' + Object.keys(room.participants || {}).length, 'inf');
     } catch(e) { log('Ошибка join: ' + e.message, 'err'); }
   });
 
   async function loadMyPlayerId(sessionId) {
     try {
-      const parts = await api('/sessions/' + sessionId + '/participants');
-      // Последний участник — скорее всего мы (только что добавились)
-      if (parts.length > 0) {
-        const me = parts[parts.length - 1];
-        // runtime user id: для зарегистрированных — str(user_id), для гостей — "guest:<guest_id>"
-        const rid = me.user_id ? String(me.user_id) : 'guest:' + me.guest_id;
-        document.getElementById('myPlayerId').value = rid;
-        log('Мой player_id: ' + rid, 'inf');
+      const room = await api('/rooms/' + sessionId);
+      // room.participants это объект {user_id: {username, is_guest, ...}, ...}
+      const myId = document.getElementById('myPlayerId').value;
+      if (myId && room.participants && room.participants[myId]) {
+        log('Мой player_id: ' + myId, 'inf');
       }
-    } catch(e) { log('Не удалось получить participants: ' + e.message, 'err'); }
+    } catch(e) { log('Не удалось получить room info: ' + e.message, 'err'); }
   }
 
   // Шаг 3a: старт
   document.getElementById('btnStart').addEventListener('click', async () => {
-    const sid = document.getElementById('sessionId').value.trim();
-    if (!sid) { log('Нет session ID', 'err'); return; }
+    const roomId = document.getElementById('sessionId').value.trim();
+    if (!roomId) { log('Нет room ID', 'err'); return; }
     try {
-      await api('/sessions/' + sid + '/start-game', { method: 'POST' });
+      await api('/rooms/' + roomId + '/start', { method: 'POST' });
       log('Игра запущена!', 'ok');
     } catch(e) { log('Ошибка старта: ' + e.message, 'err'); }
   });
@@ -147,10 +165,10 @@
   let gameState = { players: {}, pipes: [], running: false };
 
   document.getElementById('btnConnect').addEventListener('click', () => {
-    const sid = document.getElementById('sessionId').value.trim();
-    if (!sid) { log('Нет session ID', 'err'); return; }
+    const inviteCode = document.getElementById('inviteCodeWs').value.trim();
+    if (!inviteCode) { log('Нет invite кода. Сначала создай сессию!', 'err'); return; }
     if (ws) { ws.close(); ws = null; }
-    const url = server().replace(/^http/, 'ws') + '/ws/game/flappy/' + sid;
+    const url = server().replace(/^http/, 'ws') + '/ws/game/flappy/' + inviteCode;
     log('WS → ' + url);
     ws = new WebSocket(url);
     ws.onopen  = () => { setBadge('ok', 'connected'); log('WS открыт', 'ok'); };

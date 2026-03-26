@@ -88,6 +88,11 @@ class WsRoomService:
         if room.status != RoomStatus.WAITING:
             raise InvalidOperationError("Невозможно начать игру (неверный статус комнаты)")
 
+        # Check participants from in-memory room (more reliable than DB)
+        participants = self.room_manager.participant_ids(room_id)
+        if len(participants) < 2:
+            raise InvalidOperationError("Для старта необходимо минимум 2 участника")
+
         ok = self.room_manager.start_game(room_id)
         if not ok:
             raise InvalidOperationError("Невозможно начать игру (неверный статус комнаты)")
@@ -98,14 +103,18 @@ class WsRoomService:
             self._rollback_runtime_start(room_id)
             raise
 
-        participants = self.room_manager.participant_ids(room_id)
+        # Start Flappy game if it exists in memory
+        from backend.websocket.game_flappy import _flappy_games  # noqa: PLC0415
+        game = _flappy_games.get(room_id)
+        if game is not None and not game.running:
+            game.start()
+
         from backend.websocket.protocol import serialize_game_started
 
         results = await self.connection_manager.broadcast(participants, serialize_game_started(room_id))
         failed = [uid for uid, success in results.items() if not success]
         if failed:
-            logger.error("Не удалось отправить GAME_STARTED %s пользователям: %s", len(failed), failed)
-            raise InvalidOperationError("Игра запущена, но не все участники получили уведомление")
+            logger.warning("Не удалось отправить GAME_STARTED %s пользователям: %s", len(failed), failed)
         return {"status": "ok"}
 
     def _rollback_runtime_start(self, room_id: str) -> None:
@@ -123,9 +132,8 @@ class WsRoomService:
         return room.to_dict()
 
     def ensure_runtime_room(self, room_id: str) -> Room | None:
-        room = self.room_manager.get_room(room_id)
-        if room is not None:
-            return room
+        # Always rebuild/resync from DB to ensure participants are up-to-date
+        # (important when new players join)
         return self._rebuild_runtime_room(room_id)
 
     def validate_db_membership(

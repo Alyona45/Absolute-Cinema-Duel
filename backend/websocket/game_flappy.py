@@ -142,7 +142,7 @@ async def flappy_ws(websocket: WebSocket, invite_code: str):
         if game is None:
             player_ids = list(room.participants.keys())
             game = FlappyGame(player_ids)
-            game.start()
+            # Don't auto-start - wait for room.start endpoint
             _flappy_games[invite_code] = game
         elif user_id not in game.players:
             game.players[user_id] = FlappyPlayer(id=user_id)
