@@ -19,7 +19,7 @@ class RoomStatus(str, enum.Enum):
 class Participant:
     """Участник комнаты: имя, статус подключения, гость или нет."""
     username: str
-    connected: bool = True
+    connected: bool = False
     is_guest: bool = False
     email: str | None = None  # Для зарегистрированных пользователей — для верификации JWT
 
@@ -48,6 +48,11 @@ class Room:
     participants: dict[str, Participant] = field(default_factory=dict)
     status: RoomStatus = RoomStatus.WAITING
     last_activity: float = field(default_factory=time.time)
+    # Chosen mini-game for the current session. Set by the host via
+    # `POST /rooms/{code}/select-game`; consumed by late-joining clients
+    # so they can fast-forward past the game-select screen instead of
+    # getting stuck waiting for a broadcast they already missed.
+    selected_game: str | None = None
 
     def __post_init__(self) -> None:
         if self.host_user_id not in self.participants:
@@ -99,4 +104,5 @@ class Room:
                 for uid, p in self.participants.items()
             },
             "status": self.status.value,
+            "selected_game": self.selected_game,
         }

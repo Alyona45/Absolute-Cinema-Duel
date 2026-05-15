@@ -54,6 +54,10 @@ class ConnectionManager:
             try:
                 await self.send(user_id, message)
                 results[user_id] = True
+            except ConnectionError:
+                # Адресат сейчас не подключён — это нормально для
+                # прелобби и фазы confirm_wait, не спамим traceback'ами.
+                results[user_id] = False
             except Exception as exc:
                 logger.error("Broadcast failed for %s: %s", user_id, exc, exc_info=True)
                 results[user_id] = False

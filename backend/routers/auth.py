@@ -2,7 +2,6 @@ import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
-from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -45,14 +44,6 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
-def get_refresh_token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-class RefreshRequest(BaseModel):
-    refresh_token: str
-
-
 class LogoutRequest(BaseModel):
     refresh_token: str
 
@@ -67,19 +58,61 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)) -> UserRespon
     Регистрирует нового пользователя.
     Возвращает 400, если email или имя пользователя уже заняты.
     """
-    if get_user_by_email(db, user_data.email):
+    normalized_email = user_data.email.strip().lower()
+    normalized_username = user_data.username.strip()
+
+    if not normalized_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username cannot be empty",
+        )
+
+    if get_user_by_email(db, normalized_email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email is already registered",
         )
 
-    if get_user_by_username(db, user_data.username):
+    if get_user_by_username(db, normalized_username):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username is already taken",
         )
 
-    return create_user(db, user_data)
+    normalized_user_data = user_data.model_copy(
+        update={
+            "email": normalized_email,
+            "username": normalized_username,
+        }
+    )
+
+    try:
+        return create_user(db, normalized_user_data)
+    except ValueError as exc:
+        logger.error("Ошибка хеширования пароля: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to process password",
+        ) from exc
+    except SQLAlchemyError as exc:
+        # Возможна гонка между pre-check и commit на уникальных полях.
+        db.rollback()
+        raw_error = str(getattr(exc, "orig", exc)).lower()
+        if "email" in raw_error and "unique" in raw_error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email is already registered",
+            ) from exc
+        if "username" in raw_error and "unique" in raw_error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username is already taken",
+            ) from exc
+        logger.error("Неожиданная ошибка БД при регистрации: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to register user",
+        ) from exc
 
 
 @router.post("/login", response_model=Token)
@@ -92,7 +125,8 @@ def login(
     Возвращает access- и refresh-токены при успехе.
     """
     
-    user = authenticate_user(db, form_data.username, form_data.password)
+    email = form_data.username.strip().lower()
+    user = authenticate_user(db, email, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

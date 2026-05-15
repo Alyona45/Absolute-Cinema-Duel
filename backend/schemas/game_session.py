@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
 from backend.models import SessionStatus
+from backend.schemas.movie import MovieResponse
 
 
 class GameSessionResponse(BaseModel):
@@ -15,6 +18,9 @@ class GameSessionResponse(BaseModel):
     invite_code: str
     status: SessionStatus
     winner_session_movie_id: int | None = None
+    winner_movie_id: int | None = None
+    winner_user_id: int | None = None
+    winner_session_movie: SessionMovieResponse | None = None
     started_at: datetime
     finished_at: datetime | None = None
 
@@ -60,3 +66,4 @@ class SessionMovieResponse(BaseModel):
     session_id: int
     movie_id: int
     proposed_by_participant_id: int
+    movie: MovieResponse | None = None

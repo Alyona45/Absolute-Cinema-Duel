@@ -199,6 +199,7 @@ class TournamentService:
         preset_id: int | None,
         criteria: TournamentCriteria | None,
         host_user_id: int | None,
+        session_movie_ids: list[int] | None = None,
     ) -> tuple[int, str, TournamentRoomState]:
         return await asyncio.to_thread(
             self._create_room_sync,
@@ -208,6 +209,7 @@ class TournamentService:
             preset_id,
             criteria.model_dump() if criteria else None,
             host_user_id,
+            session_movie_ids,
         )
 
     def _create_room_sync(
@@ -218,6 +220,7 @@ class TournamentService:
         preset_id: int | None,
         criteria: dict[str, Any] | None,
         host_user_id: int | None,
+        session_movie_ids: list[int] | None = None,
     ) -> tuple[int, str, TournamentRoomState]:
         db = SessionLocal()
         try:
@@ -229,17 +232,42 @@ class TournamentService:
                     raise ValueError("Preset not found")
                 selected_criteria = json.loads(preset.criteria_json)
 
-            size = normalize_bracket_size(bracket_size)
-            movies = repo.get_movies_by_criteria(selected_criteria, size)
-            if len(movies) < size:
-                fallback = repo.get_random_movies(size)
-                movie_by_id = {movie.id: movie for movie in movies}
-                for movie in fallback:
-                    movie_by_id[movie.id] = movie
-                movies = list(movie_by_id.values())
+            # Bug 2 fix: prefer explicit session movies picked by players.
+            # The old path fell back to `get_movies_by_criteria` / `get_random_movies`
+            # which produced a bracket completely unrelated to the session's
+            # SessionMovie records. When the caller provides `session_movie_ids`
+            # we build the bracket from exactly those movies.
+            if session_movie_ids:
+                unique_ids = list(dict.fromkeys(session_movie_ids))
+                movies = repo.get_movies_by_ids(unique_ids)
+                if len(movies) < 2:
+                    raise ValueError(
+                        "Need at least 2 session movies to build a MovieCO bracket"
+                    )
+                # Keep only movies whose ids were actually requested, drop any
+                # leftovers that the DB might have returned in unexpected order.
+                movie_by_id = {m.id: m for m in movies}
+                ordered = [movie_by_id[mid] for mid in unique_ids if mid in movie_by_id]
+                size = normalize_bracket_size(len(ordered))
+                if len(ordered) < size:
+                    # Pad the bracket with duplicates so it always fills a
+                    # power-of-two bracket. This keeps the invariant that
+                    # every id in the bracket comes from the session.
+                    while len(ordered) < size:
+                        ordered.append(ordered[len(ordered) % len(movies)])
+                movies = ordered[:size]
+            else:
+                size = normalize_bracket_size(bracket_size)
+                movies = repo.get_movies_by_criteria(selected_criteria, size)
+                if len(movies) < size:
+                    fallback = repo.get_random_movies(size)
+                    movie_by_id = {movie.id: movie for movie in movies}
+                    for movie in fallback:
+                        movie_by_id[movie.id] = movie
+                    movies = list(movie_by_id.values())
 
-            if len(movies) < size:
-                raise ValueError("Not enough cached movies in DB for bracket size")
+                if len(movies) < size:
+                    raise ValueError("Not enough cached movies in DB for bracket size")
 
             pairs = build_initial_pairs([movie.id for movie in movies], size)
             rounds = [pairs]
@@ -286,6 +314,15 @@ class TournamentService:
             room = repo.get_room_by_id(room_id)
             if room is None:
                 raise ValueError("Room not found")
+
+            # Idempotent join: if a participant with the same display_name
+            # already exists, return their existing user_key instead of
+            # creating a duplicate (which would be non-host and break start_room).
+            existing_participants = repo.list_participants(room.id)
+            for p in existing_participants:
+                if p.display_name == display_name:
+                    room_state = self._build_room_state(repo, room)
+                    return p.user_key, room_state
 
             user_key = secrets.token_urlsafe(18)
             repo.add_participant(
@@ -384,6 +421,17 @@ class TournamentService:
                     db.add(room)
                     db.commit()
                     db.refresh(room)
+                    # Bug: finished MovieCO tournament wasn't surfaced on
+                    # the /result page and "история игр" because only
+                    # TournamentRoom was being updated — the underlying
+                    # GameSession stayed in PLAYING with no winner set.
+                    # Sync the winner over to the GameSession so the
+                    # result page and profile history pick it up.
+                    self._sync_movieco_winner_to_game_session(
+                        db,
+                        tournament_title=room.title,
+                        winner_movie_id=state["winner_movie_id"],
+                    )
 
             return self._build_room_state(repo, room)
         finally:
@@ -509,3 +557,81 @@ class TournamentService:
             year=movie.year,
             rating=movie.rating,
         )
+
+    def _sync_movieco_winner_to_game_session(
+        self,
+        db,
+        *,
+        tournament_title: str,
+        winner_movie_id: int,
+    ) -> None:
+        """
+        MovieCO tournament lives in its own tables (`tournament_*`), but
+        the shared `/result` page and the user's game history read from
+        `GameSession.winner_session_movie_id`. When the bracket finishes
+        we link the two: resolve the GameSession via the tournament
+        title ("Session {invite_code}"), find the SessionMovie for the
+        winning movie_id, and mark the game session as FINISHED with
+        the right winner. Best-effort — failure here must not roll back
+        the tournament write.
+        """
+        import logging  # noqa: PLC0415
+
+        from backend.crud.game_session import (  # noqa: PLC0415
+            get_game_session_by_invite_code,
+            set_winner,
+        )
+        from backend.crud.session_movie import get_movies_by_session  # noqa: PLC0415
+        from backend.models import SessionStatus  # noqa: PLC0415
+
+        logger = logging.getLogger(__name__)
+
+        prefix = "Session "
+        if not tournament_title.startswith(prefix):
+            return
+        invite_code = tournament_title[len(prefix):].strip()
+        if not invite_code:
+            return
+
+        try:
+            game_session = get_game_session_by_invite_code(db, invite_code)
+            if game_session is None:
+                logger.warning(
+                    "MovieCO winner sync: no GameSession for invite_code=%s",
+                    invite_code,
+                )
+                return
+
+            session_movies = get_movies_by_session(db, game_session.id)
+            winning = next(
+                (sm for sm in session_movies if sm.movie_id == winner_movie_id),
+                None,
+            )
+            if winning is None:
+                logger.warning(
+                    "MovieCO winner sync: movie_id=%s not in session_movies for %s",
+                    winner_movie_id,
+                    invite_code,
+                )
+                # Still mark session finished so it shows up in history.
+                if game_session.status != SessionStatus.FINISHED:
+                    from backend.crud.game_session import update_session_status  # noqa: PLC0415
+                    update_session_status(db, game_session, SessionStatus.FINISHED)
+                return
+
+            set_winner(db, game_session, winning.id)
+            logger.info(
+                "MovieCO winner synced to GameSession %s: session_movie_id=%s movie_id=%s",
+                invite_code,
+                winning.id,
+                winner_movie_id,
+            )
+        except Exception:
+            logger.exception(
+                "MovieCO winner sync failed for %s; tournament state is still committed",
+                invite_code,
+            )
+            try:
+                db.rollback()
+            except Exception:  # pragma: no cover - best-effort cleanup
+                pass

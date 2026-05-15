@@ -1,0 +1,319 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-primary: #171717;
+  --color-bg-secondary: #262626;
+  --color-bg-surface: #404040;
+  --color-bg-element: rgba(255, 255, 255, 0.05);
+  --color-accent-red: #dc2626;
+  --color-accent-red-dark: #7f1d1d;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #a3a3a3;
+  --color-text-placeholder: #737373;
+  --color-border-default: #404040;
+  --color-border-red: #dc2626;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --spacing-nav: 5rem;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  background-color: var(--color-bg-primary);
+  min-height: 100dvh;
+}
+
+body {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+.app-shell {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+
+body[data-page="landing"] .animated-bg-layer {
+  display: none;
+}
+
+:root {
+  --surface-1: #0f1115;
+  --surface-2: #171a20;
+  --surface-3: #1f242d;
+  --text-primary: #ffffff;
+  --text-secondary: #c7ccd5;
+}
+.page-container {
+  display: flex;
+  background-color: #171717;
+  min-height: calc(100dvh - var(--spacing-nav));
+  overflow-x: hidden;
+}
+
+
+.page-wrap {
+  width: 100%;
+  max-width: 32rem;
+  margin-inline: auto;
+}
+
+.content-appear {
+  animation: content-rise 760ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.stagger-fade > * {
+  animation: stagger-rise 640ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.stagger-fade > *:nth-child(1) {
+  animation-delay: 60ms;
+}
+
+.stagger-fade > *:nth-child(2) {
+  animation-delay: 130ms;
+}
+
+.stagger-fade > *:nth-child(3) {
+  animation-delay: 200ms;
+}
+
+.stagger-fade > *:nth-child(4) {
+  animation-delay: 270ms;
+}
+
+.stagger-fade > *:nth-child(5) {
+  animation-delay: 340ms;
+}
+
+.stagger-fade > *:nth-child(6) {
+  animation-delay: 410ms;
+}
+
+.stagger-fade > *:nth-child(7) {
+  animation-delay: 480ms;
+}
+
+.stagger-fade > *:nth-child(8) {
+  animation-delay: 550ms;
+}
+
+.stagger-fade > *:nth-child(9) {
+  animation-delay: 620ms;
+}
+
+.stagger-fade > *:nth-child(10) {
+  animation-delay: 690ms;
+}
+
+.animate-float-slow {
+  animation: float-orb 12s ease-in-out infinite;
+}
+
+.animate-float-medium {
+  animation: float-orb 9s ease-in-out infinite;
+}
+
+.animate-float-fast {
+  animation: float-orb 7s ease-in-out infinite;
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #525252;
+  border-radius: 2px;
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
+
+@keyframes content-rise {
+  from {
+    opacity: 0;
+    transform: translateY(22px) scale(0.985);
+    filter: blur(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes stagger-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.98);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes float-orb {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -14px, 0) scale(1.04);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .content-appear,
+  .stagger-fade > *,
+  .animate-float-slow,
+  .animate-float-medium,
+  .animate-float-fast {
+    animation: none !important;
+  }
+}
+
+/* Страница профиля */
+
+.profile-history {
+  margin-bottom: 14px;
+}
+
+@media (max-width: 640px) {
+  .profile-header {
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 24px !important;
+    padding-left: 25px !important;
+    padding-right: 25px !important;
+    padding-top: 34px !important;
+    padding-bottom: 30px !important;
+    border-bottom-left-radius: 44px !important;
+    border-bottom-right-radius: 44px !important;
+    text-align: center;
+  }
+
+  .profile-identity {
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 14px !important;
+    width: 100%;
+  }
+
+  .profile-identity-text {
+    align-items: center !important;
+    text-align: center !important;
+    gap: 20px !important;
+    width: 100%;
+  }
+
+  .profile-stats {
+    gap: 50px !important;
+    justify-content: center !important;
+    width: auto !important;
+  }
+
+  .profile-stats > div {
+    align-items: center !important;
+  }
+
+  .profile-stat-value {
+    font-size: 32px !important;
+    line-height: 1 !important;
+  }
+
+  .profile-stat-label {
+    font-size: 20px !important;
+    line-height: 1 !important;
+    margin-top: 4px;
+  }
+
+  .profile-name {
+    font-size: 20px !important;
+    text-align: center !important;
+    width: 100%;
+  }
+
+  .profile-buttons {
+    width: 100%;
+    gap: 12px !important;
+    flex-wrap: nowrap !important;
+  }
+
+  .profile-buttons > button {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    height: 50px !important;
+    font-size: 14px !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    white-space: nowrap;
+  }
+
+  .profile-history {
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
+    margin-top: -8px;
+    margin-bottom: 8px;
+  }
+
+  .profile-history-card {
+    width: 150px !important;
+    min-height: 220px !important;
+  }
+}

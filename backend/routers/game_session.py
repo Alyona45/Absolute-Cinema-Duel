@@ -64,7 +64,7 @@ def start_game(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     
 @router.post(
-    "/",
+    "",
     response_model=GameSessionResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -101,7 +101,7 @@ def join_session_by_code(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.get("/", response_model=list[GameSessionResponse])
+@router.get("", response_model=list[GameSessionResponse])
 def list_my_sessions(
     current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
     service: Annotated[GameSessionService, Depends(get_game_session_service)],
@@ -110,6 +110,18 @@ def list_my_sessions(
     if current_actor.user_id is None:
         return []
     return service.list_my_sessions(current_actor.user_id)
+
+
+@router.get("/by-code/{invite_code}", response_model=GameSessionResponse)
+def get_session_by_invite_code(
+    invite_code: str,
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
+) -> GameSessionResponse:
+    """Публичный эндпоинт: получить сессию по invite-коду (без авторизации)."""
+    try:
+        return service.get_session_by_invite_code(invite_code)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get("/{session_id}", response_model=GameSessionResponse)
@@ -139,18 +151,20 @@ def list_participants(
     response_model=SessionMovieResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def propose_movie(
+async def propose_movie(
     session_id: int,
     body: AddMovieFromKinopoiskRequest,
     current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
     service: Annotated[GameSessionService, Depends(get_game_session_service)],
 ) -> SessionMovieResponse:
     try:
-        return service.propose_movie(session_id, body.movie_id, current_actor)
+        return await service.propose_movie_from_kinopoisk(session_id, body.kinopoisk_id, current_actor)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except AccessDeniedError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except InvalidOperationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/{session_id}/movies", response_model=list[SessionMovieResponse])
@@ -165,14 +179,14 @@ def list_session_movies(
 
 
 @router.delete("/{session_id}/movies/{session_movie_id}", status_code=status.HTTP_204_NO_CONTENT)
-def retract_movie(
+async def retract_movie(
     session_id: int,
     session_movie_id: int,
     current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
     service: Annotated[GameSessionService, Depends(get_game_session_service)],
 ) -> None:
     try:
-        service.retract_movie(session_id, session_movie_id, current_actor)
+        await service.retract_movie(session_id, session_movie_id, current_actor)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SessionMovieNotFoundError as exc:
@@ -182,14 +196,14 @@ def retract_movie(
 
 
 @router.post("/{session_id}/select-movie", response_model=SessionParticipantResponse)
-def select_movie(
+async def select_movie(
     session_id: int,
     body: SelectParticipantMovieRequest,
     current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
     service: Annotated[GameSessionService, Depends(get_game_session_service)],
 ) -> SessionParticipantResponse:
     try:
-        return service.select_movie_for_participant(
+        return await service.select_movie_for_participant(
             session_id, current_actor, body.session_movie_id
         )
     except SessionNotFoundError as exc:

@@ -36,6 +36,11 @@ from backend.services.errors import (
     SessionNotFoundError,
 )
 from backend.services.movie_service import MovieService
+from backend.websocket.protocol import (
+    serialize_movie_added,
+    serialize_movie_removed,
+    serialize_movie_selected,
+)
 from backend.websocket.room import RoomManager
 from backend.websocket.models import Participant
 
@@ -93,6 +98,48 @@ class GameSessionService:
         if self._room_manager is None:
             return
         self._room_manager.start_game(str(session_id))
+
+    async def _broadcast_to_room(self, session_id: int, message: dict) -> None:
+        """
+        Bug 3 fix: push a lobby/game sync event to every WebSocket
+        attached to the session room. Best-effort: any failure is
+        swallowed because the DB transaction is already the source of
+        truth for the mutation.
+
+        Note: the runtime room is keyed by the session's invite_code
+        (see WsRoomService / _sync_create_room / ensure_runtime_room),
+        NOT by the numeric session id, so we resolve the invite_code
+        first and try both keys as a safety net.
+        """
+        if self._room_manager is None:
+            return
+
+        candidate_keys: list[str] = []
+        game_session = get_game_session_by_id(self.db, session_id)
+        if game_session is not None and game_session.invite_code:
+            candidate_keys.append(game_session.invite_code)
+        # Fallback key in case a legacy path created the room under the
+        # numeric session id (older flow).
+        candidate_keys.append(str(session_id))
+
+        user_ids: list[str] = []
+        for key in candidate_keys:
+            ids = self._room_manager.participant_ids(key)
+            if ids:
+                user_ids = ids
+                break
+
+        if not user_ids:
+            return
+
+        try:
+            # Lazy import avoids a circular dependency between the
+            # service and the WS router (which itself imports the service).
+            from backend.routers.ws import conn_manager  # noqa: PLC0415
+
+            await conn_manager.broadcast(user_ids, message)
+        except Exception:  # pragma: no cover - best effort broadcast
+            return
 
     # ─────────────────── Public API ───────────────────────────────────
 
@@ -185,12 +232,25 @@ class GameSessionService:
         movie_service = MovieService(self.db)
         movie = await movie_service.get_or_create_movie_by_kinopoisk_id(kinopoisk_id)
         try:
-            return add_movie_to_session(self.db, session_id, movie.id, participant.id)
+            session_movie = add_movie_to_session(self.db, session_id, movie.id, participant.id)
         except IntegrityError as exc:
             self.db.rollback()
             raise InvalidOperationError("Фильм уже добавлен в игровую сессию") from exc
 
-    def retract_movie(self, session_id: int, session_movie_id: int, actor: CurrentActor) -> None:
+        await self._broadcast_to_room(
+            session_id,
+            serialize_movie_added(
+                session_id=session_id,
+                session_movie_id=session_movie.id,
+                movie_id=session_movie.movie_id,
+                proposed_by_participant_id=session_movie.proposed_by_participant_id,
+            ),
+        )
+        return session_movie
+
+    async def retract_movie(
+        self, session_id: int, session_movie_id: int, actor: CurrentActor
+    ) -> None:
         session_movie = get_session_movie_by_id(self.db, session_movie_id)
         if session_movie is None or session_movie.session_id != session_id:
             raise SessionMovieNotFoundError("Фильм не найден в этой сессии")
@@ -201,19 +261,27 @@ class GameSessionService:
 
         remove_movie_from_session(self.db, session_movie_id)
 
+        await self._broadcast_to_room(
+            session_id,
+            serialize_movie_removed(
+                session_id=session_id,
+                session_movie_id=session_movie_id,
+            ),
+        )
+
     def list_session_movies(self, session_id: int) -> list[SessionMovie]:
         self.get_session(session_id)
         return get_movies_by_session(self.db, session_id)
 
-    def select_movie_for_participant(
+    async def select_movie_for_participant(
         self,
         session_id: int,
         actor: CurrentActor,
         session_movie_id: int,
     ) -> SessionParticipant:
         game_session = self.get_session(session_id)
-        if game_session.status != SessionStatus.CREATED:
-            raise InvalidOperationError("Выбор фильма доступен только до старта сессии")
+        if game_session.status not in (SessionStatus.CREATED, SessionStatus.PLAYING):
+            raise InvalidOperationError("Выбор фильма недоступен для завершенной сессии")
 
         participant = self.require_participant(session_id, actor)
 
@@ -221,7 +289,16 @@ class GameSessionService:
         if session_movie is None or session_movie.session_id != session_id:
             raise InvalidOperationError("Выбранный фильм не принадлежит этой сессии")
 
-        return set_selected_session_movie(self.db, participant, session_movie_id)
+        updated = set_selected_session_movie(self.db, participant, session_movie_id)
+        await self._broadcast_to_room(
+            session_id,
+            serialize_movie_selected(
+                session_id=session_id,
+                participant_id=participant.id,
+                session_movie_id=session_movie_id,
+            ),
+        )
+        return updated
 
     def start_session_by_invite_code(self, invite_code: str, actor: CurrentActor) -> GameSession:
         game_session = self.get_session_by_invite_code(invite_code)

@@ -125,6 +125,56 @@ class WsRoomService:
             room.status = RoomStatus.WAITING
             room.touch()
 
+    async def broadcast_game_selected(
+        self,
+        room_id: str,
+        actor: CurrentActor,
+        game_type: str,
+    ) -> dict[str, str]:
+        """Host picks a game in /game-select → broadcast to all participants."""
+        if game_type not in ("flappy", "movieco"):
+            raise InvalidOperationError("Неизвестный тип игры")
+
+        room = self.ensure_runtime_room(room_id)
+        if room is None:
+            raise SessionNotFoundError("Комната не найдена")
+
+        game_session = get_game_session_by_invite_code(self.db, room_id)
+        if game_session is None:
+            raise SessionNotFoundError("Комната не найдена")
+
+        host_participant = get_host_participant(self.db, game_session.id)
+        if host_participant is None:
+            raise AccessDeniedError("Хост комнаты не найден")
+
+        # Authorization: only the host can trigger the choice.
+        actor_runtime_id = runtime_user_id_for_actor(actor)
+        host_runtime_id = runtime_user_id_for_participant(host_participant)
+        if host_runtime_id != actor_runtime_id:
+            raise AccessDeniedError("Только хост может выбрать игру")
+
+        # Persist the choice on the room so late-joining WS clients pick
+        # it up from ROOM_STATE and don't linger on the "Ожидание хоста"
+        # screen when the broadcast raced past them.
+        room.selected_game = game_type
+        room.touch()
+
+        from backend.websocket.protocol import serialize_game_selected  # noqa: PLC0415
+
+        participants = self.room_manager.participant_ids(room_id)
+        results = await self.connection_manager.broadcast(
+            participants,
+            serialize_game_selected(room_id, game_type),
+        )
+        failed = [uid for uid, success in results.items() if not success]
+        if failed:
+            logger.warning(
+                "Не удалось отправить GAME_SELECTED %s пользователям: %s",
+                len(failed),
+                failed,
+            )
+        return {"status": "ok", "game_type": game_type}
+
     def get_room(self, room_id: str) -> dict:
         room = self.ensure_runtime_room(room_id)
         if room is None:
@@ -170,21 +220,21 @@ class WsRoomService:
         if host_participant is None:
             return None
 
-        try:
-            self.room_manager.create_room(
-                host_username=host_participant.display_name,
-                is_guest=host_participant.user_id is None,
-                email=host_participant.user.email if host_participant.user is not None else None,
-                room_id=invite_code,
-                user_id=runtime_user_id_for_participant(host_participant),
-            )
-        except ValueError:
-            existing_room = self.room_manager.get_room(invite_code)
-            if existing_room is not None:
-                return existing_room
-            raise
-
         room = self.room_manager.get_room(invite_code)
+        if room is None:
+            try:
+                self.room_manager.create_room(
+                    host_username=host_participant.display_name,
+                    is_guest=host_participant.user_id is None,
+                    email=host_participant.user.email if host_participant.user is not None else None,
+                    room_id=invite_code,
+                    user_id=runtime_user_id_for_participant(host_participant),
+                )
+                room = self.room_manager.get_room(invite_code)
+            except ValueError:
+                # В редких случаях гонки комната могла быть создана параллельно
+                room = self.room_manager.get_room(invite_code)
+
         if room is None:
             return None
 

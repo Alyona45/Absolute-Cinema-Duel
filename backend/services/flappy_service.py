@@ -35,15 +35,15 @@ class FlappyGameState(BaseModel):
 
 
 class FlappyGame:
-    GRAVITY = 0.5
-    JUMP_VELOCITY = -7.5
-    PIPE_SPEED = 2.5
-    PIPE_INTERVAL = 90       # тиков между трубами
-    PIPE_START_X = 800.0     # правый край экрана
-    GROUND_Y = 400.0
-    BIRD_X = 150.0           # фиксированная x-позиция птицы (должна совпадать с фронтом)
-    BIRD_RADIUS = 10.0
-    TICK_RATE = 1 / 30       # 30 FPS
+    GRAVITY = 0.125
+    JUMP_VELOCITY = -3.75
+    PIPE_SPEED = 1.25
+    PIPE_INTERVAL = 180       # тиков между трубами
+    PIPE_START_X = 400.0     # правый край экрана
+    GROUND_Y = 568.0
+    BIRD_X = 80.0           # фиксированная x-позиция птицы (должна совпадать с фронтом)
+    BIRD_RADIUS = 15.0
+    TICK_RATE = 1 / 60       # 60 FPS
 
     def __init__(self, player_ids: List[str]):
         self.players: Dict[str, FlappyPlayer] = {
@@ -51,12 +51,28 @@ class FlappyGame:
         }
         self.pipes: List[FlappyPipe] = []
         self.tick_count: int = 0
-        self.running: bool = True
+        # Bug 4a/4b fix: the game must NOT be running until every
+        # participant has (1) confirmed their movie and (2) pressed Ready.
+        # Previously this defaulted to True, which combined with a
+        # generous connection check meant the loop could tick (and the
+        # second player's bird fall to the ground) before they even
+        # loaded the game screen.
+        self.running: bool = False
+        # `started` separates the "not yet begun" state (running=False but
+        # game_over=False) from "game ended" (running=False AND started).
+        # Without this, `is_game_over()` returned True immediately after
+        # construction and `_recv_events_loop` exited before either
+        # player got a chance to press Ready, closing both WS sockets.
+        self.started: bool = False
+        # Bug 4b: the "Готов" gate lives here. `_room_game_loop` starts
+        # the game only after every connected participant id is present.
+        self.ready_ids: set[str] = set()
         self._last_pipe_tick: int = 0
 
     def start(self) -> None:
         self._spawn_pipe()
         self.running = True
+        self.started = True
         self.tick_count = 0
         self._last_pipe_tick = 0
 
@@ -122,7 +138,10 @@ class FlappyGame:
         )
 
     def is_game_over(self) -> bool:
-        return not self.running
+        # The game is "over" only if it actually started and then all
+        # players died. Before `start()` is called (i.e. during
+        # confirm_wait / ready_wait) we're "not running yet" but not over.
+        return self.started and not self.running
 
     def get_winner(self) -> Optional[str]:
         alive = [p for p in self.players.values() if p.alive]

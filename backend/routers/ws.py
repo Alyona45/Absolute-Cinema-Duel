@@ -116,6 +116,34 @@ async def start_room(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+class SelectGameBody(BaseModel):
+    game_type: str = Field(..., description="'flappy' или 'movieco'")
+
+
+@router.post("/rooms/{room_id}/select-game")
+async def select_game(
+    room_id: str,
+    body: SelectGameBody,
+    current_actor: CurrentActor = Depends(get_current_actor),
+    service: WsRoomService = Depends(get_ws_room_service),
+):
+    """Host picks a mini-game. Server fans the choice out over WS so the
+    rest of the room navigates to the same screen (flappy / movie picker).
+    """
+    try:
+        return await service.broadcast_game_selected(
+            room_id=room_id,
+            actor=current_actor,
+            game_type=body.game_type,
+        )
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AccessDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except InvalidOperationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/rooms/{room_id}")
 def get_room(
     room_id: str,

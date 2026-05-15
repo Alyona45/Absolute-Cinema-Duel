@@ -93,6 +93,7 @@ async def create_room(body: TournamentRoomCreate) -> TournamentRoomCreated:
             preset_id=body.preset_id,
             criteria=body.criteria,
             host_user_id=None,
+            session_movie_ids=body.session_movie_ids,
         )
         return TournamentRoomCreated(room_id=room_id, user_key=user_key, room=room_state)
     except Exception as exc:

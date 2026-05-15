@@ -106,6 +106,24 @@ class GameSession(Base):
     host_user = relationship("User")
     # foreign_keys is required because there are two FK paths between game_sessions and session_movies
     winner_session_movie = relationship("SessionMovie", foreign_keys=[winner_session_movie_id])
+    participants = relationship("SessionParticipant", back_populates="session")
+
+    @property
+    def winner_movie_id(self) -> int | None:
+        if self.winner_session_movie is None:
+            return None
+        return self.winner_session_movie.movie_id
+
+    @property
+    def winner_user_id(self) -> int | None:
+        if self.winner_session_movie is None:
+            return None
+
+        for participant in self.participants:
+            if participant.selected_session_movie_id == self.winner_session_movie_id:
+                return participant.user_id
+
+        return None
 
     # Индекс для быстрого поиска по host_user_id
     __table_args__ = (Index('idx_game_sessions_host_user_id', 'host_user_id'),)
@@ -122,7 +140,7 @@ class SessionParticipant(Base):
     selected_session_movie_id = Column(Integer, ForeignKey('session_movies.id'))
 
     user = relationship("User")
-    session = relationship("GameSession")
+    session = relationship("GameSession", back_populates="participants")
     selected_session_movie = relationship("SessionMovie", foreign_keys=[selected_session_movie_id])
 
     # Уникальный индекс для предотвращения дублирования участников

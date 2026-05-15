@@ -35,6 +35,12 @@ class TournamentRoomCreate(BaseModel):
     bracket_size: int = Field(default=16, ge=2, le=16)
     preset_id: int | None = None
     criteria: TournamentCriteria | None = None
+    # Bug 2 fix: when session_movie_ids is provided, the bracket is built
+    # from exactly those movies (the ones players picked for the session),
+    # bypassing the random/criteria-based catalog lookup.
+    session_movie_ids: list[int] | None = Field(
+        default=None, min_length=2, max_length=16
+    )
 
 
 class TournamentJoinRequest(BaseModel):

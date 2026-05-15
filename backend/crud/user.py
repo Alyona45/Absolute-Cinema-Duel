@@ -2,6 +2,7 @@ import logging
 
 from passlib.context import CryptContext
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.models import User
@@ -28,22 +29,29 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     """Возвращает True, если пароль в открытом виде совпадает с сохранённым хешем."""
-    return pwd_context.verify(plain, hashed)
+    try:
+        return pwd_context.verify(plain, hashed)
+    except Exception:
+        logger.exception("Ошибка проверки хеша пароля")
+        return False
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
     """Возвращает пользователя по email или None, если не найден."""
-    return db.query(User).filter(User.email == email).first()
+    normalized_email = email.strip().lower()
+    return db.query(User).filter(func.lower(User.email) == normalized_email).first()
 
 
 def get_user_by_username(db: Session, username: str) -> User | None:
     """Возвращает пользователя по имени пользователя или None, если не найден."""
-    return db.query(User).filter(User.username == username).first()
+    normalized_username = username.strip().lower()
+    return db.query(User).filter(func.lower(User.username) == normalized_username).first()
 
 
 def authenticate_user(db: Session, email: str, password: str) -> User | None:
     """Возвращает пользователя, если учётные данные верны, иначе None."""
-    user = get_user_by_email(db, email)
+    normalized_email = email.strip().lower()
+    user = get_user_by_email(db, normalized_email)
     if not user or not verify_password(password, user.password_hash):
         return None
     return user
@@ -55,8 +63,8 @@ def create_user(db: Session, user_data: UserCreate) -> User:
     Хеширует пароль перед сохранением — пароль в открытом виде никогда не записывается.
     """
     db_user = User(
-        email=user_data.email,
-        username=user_data.username,
+        email=user_data.email.strip().lower(),
+        username=user_data.username.strip(),
         password_hash=hash_password(user_data.password),
     )
     db.add(db_user)
@@ -76,7 +84,7 @@ def update_user(db: Session, user: User, update_data: UserUpdate) -> User:
     Изменяются только явно переданные поля (не None).
     """
     if update_data.username is not None:
-        user.username = update_data.username
+        user.username = update_data.username.strip()
 
     if update_data.password is not None:
         user.password_hash = hash_password(update_data.password)
@@ -93,10 +101,10 @@ def update_user_profile(db: Session, user: User, update_data: UserProfileUpdate)
     Уникальность username и email проверяется на уровне роутера перед вызовом этой функции.
     """
     if update_data.username is not None:
-        user.username = update_data.username
+        user.username = update_data.username.strip()
 
     if update_data.email is not None:
-        user.email = update_data.email
+        user.email = update_data.email.strip().lower()
 
     if update_data.avatar_url is not None:
         user.avatar_url = update_data.avatar_url

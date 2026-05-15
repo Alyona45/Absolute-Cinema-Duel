@@ -25,7 +25,7 @@ router = APIRouter(prefix="/movies", tags=["movies"])
 
 
 @router.post(
-    "/",
+    "",
     response_model=MovieResponse,
     status_code=status.HTTP_201_CREATED,
 )
