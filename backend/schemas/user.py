@@ -10,7 +10,7 @@ class UserCreate(BaseModel):
 
     email: EmailStr
     password: str = Field(min_length=8)
-    username: str
+    username: str = Field(min_length=2, max_length=64)
 
 
 class UserResponse(BaseModel):
@@ -30,7 +30,7 @@ class UserResponse(BaseModel):
 class UserUpdate(BaseModel):
     """Schema для обновления данных пользователя по ID (эндпоинт администратора). Все поля опциональны."""
 
-    username: str | None = None
+    username: str | None = Field(default=None, min_length=2, max_length=64)
     password: str | None = Field(default=None, min_length=8)
 
 
@@ -39,7 +39,7 @@ class UserProfileUpdate(BaseModel):
     Пароль намеренно исключён; используйте /change-password.
     """
 
-    username: str | None = None
+    username: str | None = Field(default=None, min_length=2, max_length=64)
     email: EmailStr | None = None
     avatar_url: str | None = None
 

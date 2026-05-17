@@ -1,37 +1,33 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.exc import IntegrityError
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
+from backend.actors import CurrentActor
 from backend import models
 from backend.database import get_db
 from backend.schemas.game_session import (
     GameSessionResponse,
+    JoinSessionByCodeRequest,
+    SelectParticipantMovieRequest,
+    SelectWinnerParticipantRequest,
     SessionMovieResponse,
     SessionParticipantResponse,
 )
-from backend.crud.game_session import (
-    create_game_session,
-    get_game_session_by_id,
-    get_sessions_by_user,
-    update_session_status,
-    set_winner,
+from backend.schemas.movie import AddMovieFromKinopoiskRequest
+from backend.security import ensure_guest_actor, get_current_actor, get_current_actor_optional, get_current_user
+from backend.services.errors import (
+    AccessDeniedError,
+    AlreadyParticipantError,
+    InvalidOperationError,
+    MovieNotFoundError,
+    ParticipantNotFoundError,
+    SessionMovieNotFoundError,
+    SessionNotFoundError,
 )
-from backend.crud.session_participant import (
-    add_participant,
-    remove_participant,
-    get_participants_by_session,
-    is_participant,
-)
-from backend.crud.session_movie import (
-    add_movie_to_session,
-    remove_movie_from_session,
-    get_movies_by_session,
-    get_session_movie_by_id,
-)
-from backend.models import SessionStatus
-from backend.security import get_current_user
+from backend.services.game_session_service import GameSessionService
+# Импортируем синглтон room_manager из ws.py — он живёт всё время работы сервера
+from backend.routers.ws import room_manager
 
 router = APIRouter(prefix="/sessions", tags=["game sessions"])
 
@@ -39,147 +35,115 @@ router = APIRouter(prefix="/sessions", tags=["game sessions"])
 # ─────────────────── Вспомогательная зависимость ───────────────────
 
 
-def get_session_or_404(session_id: int, db: Session = Depends(get_db)):
-    """Возвращает игровую сессию или выбрасывает 404."""
-    game_session = get_game_session_by_id(db, session_id)
-    if not game_session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Игровая сессия не найдена",
-        )
-    return game_session
+def get_game_session_service(db: Session = Depends(get_db)) -> GameSessionService:
+    # Передаём room_manager чтобы сервис синхронизировал in-memory состояние
+    return GameSessionService(db, room_manager=room_manager)
 
 
 # ─────────────────────── Игровые сессии ───────────────────────
 
-
+@router.post("/{session_id}/start-game", response_model=GameSessionResponse)
+def start_game(
+    session_id: int,
+    current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
+) -> GameSessionResponse:
+    """
+    Переводит сессию в статус PLAYING (этап игры). Пока всегда запускает Flappy Bird.
+    В будущем здесь будет выбор типа игры.
+    Только хост может инициировать старт игры.
+    """
+    try:
+        session = service.start_game(session_id, current_actor)
+        return session
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except InvalidOperationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    
 @router.post(
-    "/",
+    "",
     response_model=GameSessionResponse,
     status_code=status.HTTP_201_CREATED,
 )
 def create_session(
-    current_user: Annotated[models.User, Depends(get_current_user)],
-    db: Session = Depends(get_db),
+    response: Response,
+    current_actor: Annotated[CurrentActor | None, Depends(get_current_actor_optional)],
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
 ) -> GameSessionResponse:
-    """Создаёт новую игровую сессию. Текущий пользователь становится хостом."""
-    return create_game_session(db, host_user_id=current_user.id)
-
-
-@router.get("/my/list", response_model=list[GameSessionResponse])
-def list_my_sessions(
-    current_user: Annotated[models.User, Depends(get_current_user)],
-    db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 50,
-) -> list[GameSessionResponse]:
-    """Возвращает сессии, где текущий пользователь — хост."""
-    return get_sessions_by_user(db, current_user.id, skip, limit)
-
-
-@router.get("/{session_id}", response_model=GameSessionResponse)
-def read_session(
-    session_id: int,
-    db: Session = Depends(get_db),
-    _: Annotated[models.User, Depends(get_current_user)] = None,
-) -> GameSessionResponse:
-    """Возвращает данные игровой сессии по ID."""
-    return get_session_or_404(session_id, db)
-
-
-@router.post("/{session_id}/winner", response_model=GameSessionResponse)
-def pick_winner(
-    session_id: int,
-    winner_session_movie_id: int,
-    current_user: Annotated[models.User, Depends(get_current_user)],
-    db: Session = Depends(get_db),
-) -> GameSessionResponse:
-    """
-    Назначает фильм-победитель и завершает сессию.
-    Только хост может выбрать победителя.
-    """
-    game_session = get_session_or_404(session_id, db)
-
-    if game_session.host_user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Только хост может выбрать победителя",
-        )
-
-    # Проверяем что фильм принадлежит этой сессии
-    session_movie = get_session_movie_by_id(db, winner_session_movie_id)
-    if not session_movie or session_movie.session_id != session_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Указанный фильм не принадлежит данной сессии",
-        )
-
-    return set_winner(db, game_session, winner_session_movie_id)
-
-
-# ───────────────────────── Участники ─────────────────────────
+    """Создаёт новую игровую сессию. Текущий actor становится хостом."""
+    actor = ensure_guest_actor(response, current_actor)
+    return service.create_session(host_actor=actor)
 
 
 @router.post(
-    "/{session_id}/participants",
+    "/join-by-code",
     response_model=SessionParticipantResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def join_session(
-    session_id: int,
-    current_user: Annotated[models.User, Depends(get_current_user)],
-    db: Session = Depends(get_db),
+def join_session_by_code(
+    body: JoinSessionByCodeRequest,
+    response: Response,
+    current_actor: Annotated[CurrentActor | None, Depends(get_current_actor_optional)],
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
 ) -> SessionParticipantResponse:
-    """Добавляет текущего пользователя как участника сессии."""
-    # Убедимся, что сессия существует
-    get_session_or_404(session_id, db)
-
-    if is_participant(db, session_id, current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Вы уже являетесь участником этой сессии",
-        )
-
+    """Присоединяется к сессии по invite-коду."""
+    actor = ensure_guest_actor(response, current_actor)
     try:
-        return add_participant(db, session_id, current_user.id)
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Вы уже являетесь участником этой сессии",
-        )
+        return service.join_by_invite_code(invite_code=body.invite_code, actor=actor)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AlreadyParticipantError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except InvalidOperationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.delete("/{session_id}/participants", status_code=status.HTTP_204_NO_CONTENT)
-def leave_session(
+@router.get("", response_model=list[GameSessionResponse])
+def list_my_sessions(
+    current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
+) -> list[GameSessionResponse]:
+    """Возвращает список сессий текущего пользователя."""
+    if current_actor.user_id is None:
+        return []
+    return service.list_my_sessions(current_actor.user_id)
+
+
+@router.get("/by-code/{invite_code}", response_model=GameSessionResponse)
+def get_session_by_invite_code(
+    invite_code: str,
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
+) -> GameSessionResponse:
+    """Публичный эндпоинт: получить сессию по invite-коду (без авторизации)."""
+    try:
+        return service.get_session_by_invite_code(invite_code)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{session_id}", response_model=GameSessionResponse)
+def get_session(
     session_id: int,
-    current_user: Annotated[models.User, Depends(get_current_user)],
-    db: Session = Depends(get_db),
-) -> None:
-    """Удаляет текущего пользователя из участников сессии."""
-    removed = remove_participant(db, session_id, current_user.id)
-    if not removed:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Вы не являетесь участником этой сессии",
-        )
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
+) -> GameSessionResponse:
+    try:
+        return service.get_session(session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
-@router.get(
-    "/{session_id}/participants",
-    response_model=list[SessionParticipantResponse],
-)
+@router.get("/{session_id}/participants", response_model=list[SessionParticipantResponse])
 def list_participants(
     session_id: int,
-    db: Session = Depends(get_db),
-    _: Annotated[models.User, Depends(get_current_user)] = None,
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
 ) -> list[SessionParticipantResponse]:
-    """Возвращает список участников сессии."""
-    get_session_or_404(session_id, db)
-    return get_participants_by_session(db, session_id)
-
-
-# ─────────────────── Фильмы в сессии ───────────────────────
+    try:
+        return service.list_participants(session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post(
@@ -187,79 +151,97 @@ def list_participants(
     response_model=SessionMovieResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def propose_movie(
+async def propose_movie(
     session_id: int,
-    movie_id: int,
-    current_user: Annotated[models.User, Depends(get_current_user)],
-    db: Session = Depends(get_db),
+    body: AddMovieFromKinopoiskRequest,
+    current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
 ) -> SessionMovieResponse:
-    """
-    Предлагает фильм в сессию от имени текущего пользователя.
-    Пользователь должен быть участником сессии.
-    """
-    get_session_or_404(session_id, db)
-
-    if not is_participant(db, session_id, current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Только участники сессии могут предлагать фильмы",
-        )
-
     try:
-        return add_movie_to_session(db, session_id, movie_id, current_user.id)
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Этот фильм уже предложен в данной сессии",
-        )
+        return await service.propose_movie_from_kinopoisk(session_id, body.kinopoisk_id, current_actor)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except InvalidOperationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.delete(
-    "/{session_id}/movies/{session_movie_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-def retract_movie(
-    session_id: int,
-    session_movie_id: int,
-    current_user: Annotated[models.User, Depends(get_current_user)],
-    db: Session = Depends(get_db),
-) -> None:
-    """
-    Убирает предложенный фильм из сессии.
-    Удалить может только тот, кто предложил фильм, или хост сессии.
-    """
-    session_movie = get_session_movie_by_id(db, session_movie_id)
-    if not session_movie or session_movie.session_id != session_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Фильм не найден в этой сессии",
-        )
-
-    game_session = get_session_or_404(session_id, db)
-
-    # Удалить может автор предложения или хост сессии
-    if (
-        session_movie.proposed_by_user_id != current_user.id
-        and game_session.host_user_id != current_user.id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Нет прав на удаление этого фильма из сессии",
-        )
-
-    remove_movie_from_session(db, session_movie_id)
-
-
-@router.get(
-    "/{session_id}/movies",
-    response_model=list[SessionMovieResponse],
-)
+@router.get("/{session_id}/movies", response_model=list[SessionMovieResponse])
 def list_session_movies(
     session_id: int,
-    db: Session = Depends(get_db),
-    _: Annotated[models.User, Depends(get_current_user)] = None,
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
 ) -> list[SessionMovieResponse]:
-    """Возвращает все предложенные фильмы в сессии."""
-    get_session_or_404(session_id, db)
-    return get_movies_by_session(db, session_id)
+    try:
+        return service.list_session_movies(session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.delete("/{session_id}/movies/{session_movie_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def retract_movie(
+    session_id: int,
+    session_movie_id: int,
+    current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
+) -> None:
+    try:
+        await service.retract_movie(session_id, session_movie_id, current_actor)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SessionMovieNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+
+@router.post("/{session_id}/select-movie", response_model=SessionParticipantResponse)
+async def select_movie(
+    session_id: int,
+    body: SelectParticipantMovieRequest,
+    current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
+) -> SessionParticipantResponse:
+    try:
+        return await service.select_movie_for_participant(
+            session_id, current_actor, body.session_movie_id
+        )
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except InvalidOperationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{session_id}/winner", response_model=GameSessionResponse)
+def pick_winner(
+    session_id: int,
+    body: SelectWinnerParticipantRequest,
+    current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
+) -> GameSessionResponse:
+    try:
+        return service.pick_winner_by_participant(
+            session_id, body.winner_participant_id, current_actor
+        )
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except InvalidOperationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.delete("/{session_id}/leave", status_code=status.HTTP_204_NO_CONTENT)
+def leave_session(
+    session_id: int,
+    current_actor: Annotated[CurrentActor, Depends(get_current_actor)],
+    service: Annotated[GameSessionService, Depends(get_game_session_service)],
+) -> None:
+    try:
+        service.leave_session(session_id, current_actor)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ParticipantNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

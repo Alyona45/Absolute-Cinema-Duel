@@ -1,7 +1,18 @@
 import enum
-from sqlalchemy import Boolean, Column, Enum as SQLEnum, Float, ForeignKey, Index, Integer, String, Text, TIMESTAMP
-from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    Enum as SQLEnum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    TIMESTAMP,
+)
+from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
 Base = declarative_base()
@@ -58,7 +69,7 @@ class Movie(Base):
     runtime = Column(Integer)
     rating = Column(Float)
     cached_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
-    genre_links = relationship("MovieGenre")
+    genre_links = relationship("MovieGenre", back_populates="movie")
 
 class Genre(Base):
     __tablename__ = 'genres'
@@ -73,7 +84,7 @@ class MovieGenre(Base):
     movie_id = Column(Integer, ForeignKey('movies.id'), nullable=False)
     genre_id = Column(Integer, ForeignKey('genres.id'), nullable=False)
 
-    movie = relationship("Movie")
+    movie = relationship("Movie", back_populates="genre_links")
     genre = relationship("Genre")
 
     # Уникальный составной индекс для предотвращения повторов в movie_id и genre_id
@@ -85,7 +96,8 @@ class GameSession(Base):
     __tablename__ = 'game_sessions'
 
     id = Column(Integer, primary_key=True)
-    host_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    host_user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    invite_code = Column(String(12), nullable=False, unique=True)
     status = Column(SQLEnum(SessionStatus), default=SessionStatus.CREATED)
     winner_session_movie_id = Column(Integer, ForeignKey('session_movies.id'))
     started_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
@@ -94,6 +106,24 @@ class GameSession(Base):
     host_user = relationship("User")
     # foreign_keys is required because there are two FK paths between game_sessions and session_movies
     winner_session_movie = relationship("SessionMovie", foreign_keys=[winner_session_movie_id])
+    participants = relationship("SessionParticipant", back_populates="session")
+
+    @property
+    def winner_movie_id(self) -> int | None:
+        if self.winner_session_movie is None:
+            return None
+        return self.winner_session_movie.movie_id
+
+    @property
+    def winner_user_id(self) -> int | None:
+        if self.winner_session_movie is None:
+            return None
+
+        for participant in self.participants:
+            if participant.selected_session_movie_id == self.winner_session_movie_id:
+                return participant.user_id
+
+        return None
 
     # Индекс для быстрого поиска по host_user_id
     __table_args__ = (Index('idx_game_sessions_host_user_id', 'host_user_id'),)
@@ -102,15 +132,26 @@ class SessionParticipant(Base):
     __tablename__ = 'session_participants'
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    guest_id = Column(String(64), nullable=True)
     session_id = Column(Integer, ForeignKey('game_sessions.id'), nullable=False)
+    display_name = Column(String(64), nullable=False)
+    is_host = Column(Boolean, nullable=False, default=False)
+    selected_session_movie_id = Column(Integer, ForeignKey('session_movies.id'))
 
     user = relationship("User")
-    session = relationship("GameSession")
+    session = relationship("GameSession", back_populates="participants")
+    selected_session_movie = relationship("SessionMovie", foreign_keys=[selected_session_movie_id])
 
     # Уникальный индекс для предотвращения дублирования участников
     __table_args__ = (
-        Index('session_participants_unique', 'session_id', 'user_id', unique=True),
+        CheckConstraint(
+            "(user_id IS NOT NULL AND guest_id IS NULL) OR "
+            "(user_id IS NULL AND guest_id IS NOT NULL)",
+            name="ck_session_participants_exactly_one_identity",
+        ),
+        Index('session_participants_user_unique', 'session_id', 'user_id', unique=True),
+        Index('session_participants_guest_unique', 'session_id', 'guest_id', unique=True),
     )
 
 class SessionMovie(Base):
@@ -119,14 +160,12 @@ class SessionMovie(Base):
     id = Column(Integer, primary_key=True)
     session_id = Column(Integer, ForeignKey('game_sessions.id'), nullable=False)
     movie_id = Column(Integer, ForeignKey('movies.id'), nullable=False)
-    proposed_by_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    proposed_by_participant_id = Column(Integer, ForeignKey('session_participants.id'), nullable=False)
 
     movie = relationship("Movie")
-    proposed_by_user = relationship("User")
+    proposed_by_participant = relationship(
+        "SessionParticipant",
+        foreign_keys=[proposed_by_participant_id],
+    )
     # foreign_keys is required because there are two FK paths between session_movies and game_sessions
     session = relationship("GameSession", foreign_keys=[session_id])
-
-    # Уникальный индекс для предотвращения повторов фильмов в одной сессии
-    __table_args__ = (
-        Index('session_movies_unique', 'session_id', 'movie_id', unique=True),
-    )

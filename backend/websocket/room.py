@@ -23,6 +23,8 @@ class RoomManager:
         host_username: str,
         is_guest: bool = False,
         email: str | None = None,
+        room_id: str | None = None,
+        user_id: str | None = None,
     ) -> tuple[str, str]:
         """
         Создаёт новую комнату.
@@ -30,8 +32,11 @@ class RoomManager:
         как первый участник. is_guest — гостевой ли это пользователь.
         email — email зарегистрированного пользователя (для верификации JWT).
         """
-        room_id = uuid.uuid4().hex[:8]
-        user_id = str(uuid.uuid4())
+        room_id = room_id or uuid.uuid4().hex[:8]
+        user_id = user_id or str(uuid.uuid4())
+
+        if room_id in self.rooms:
+            raise ValueError(f"Room with id={room_id} already exists")
 
         host_participant = (
             Participant.guest(host_username)
@@ -49,6 +54,7 @@ class RoomManager:
         username: str,
         is_guest: bool = False,
         email: str | None = None,
+        user_id: str | None = None,
     ) -> str | None:
         """
         Добавляет участника в комнату.
@@ -60,15 +66,20 @@ class RoomManager:
         if room is None or room.status != RoomStatus.WAITING:
             return None
 
+        resolved_user_id = user_id or str(uuid.uuid4())
+
+        existing = room.participants.get(resolved_user_id)
+        if existing is not None:
+            return resolved_user_id
+
         participant = (
             Participant.guest(username)
             if is_guest
             else Participant.authenticated(username, email=self._require_email(email))
         )
 
-        user_id = str(uuid.uuid4())
-        room.add_participant(user_id, participant)
-        return user_id
+        room.add_participant(resolved_user_id, participant)
+        return resolved_user_id
 
     # ─────────────────── Получение данных ─────────────────────────
 
